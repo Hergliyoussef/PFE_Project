@@ -1,160 +1,107 @@
-"""
-Agent Rapporteur — backend/agents/rapporteur_agent.py
-
-Résilience :
-- Si Redmine est inaccessible → rapport partiel avec données disponibles
-- Si le LLM échoue → retry automatique (max 2 fois)
-- Si retry échoue → message d'erreur propre sans crasher
-- Totalement indépendant de l'Agent Analyse
-"""
+import logging
+from datetime import date
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.prebuilt import ToolNode
-from datetime import date
-import logging, sys, os
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from agents.tools import RAPPORTEUR_TOOLS
 from agents.state import AgentState
 
 logger = logging.getLogger(__name__)
 
-RAPPORTEUR_SYSTEM = """Tu es l'Agent Rapporteur du projet {project_id}.
-Aujourd'hui : {today}
+# Prompt orienté communication et synthèse managériale
+RAPPORTEUR_SYSTEM = """Tu es l'Agent Rapporteur expert pour le projet : {project_id}.
+Date du jour : {today}
 
-Spécialisé dans : rapports de statut, synthèses, tableaux de bord.
+MISSION :
+Transformer les données techniques en une synthèse claire et actionnable pour le management.
 
-Outils disponibles :
-- get_project_metrics → métriques globales
-- get_sprint_status   → état des sprints
-- get_project_news    → actualités
-- get_overdue_issues  → tâches en retard
+STRUCTURE DE RÉPONSE OBLIGATOIRE (Markdown) :
+📊 **TITRE DU RAPPORT**
+---
+✅ **RÉALISATIONS RÉCENTES**
+(Liste des points positifs ou tâches terminées)
 
-Format de réponse :
-📊 RAPPORT DE STATUT — {project_id} — {today}
+⚠️ **POINTS DE VIGILANCE & ALERTES**
+(Utilise 🔴 pour critique, 🟡 pour attention)
 
-Avancement global : X%
-Sprint en cours : [nom] — X% complété
+📋 **PROCHAINES ÉTAPES & ACTIONS**
+(Ce qu'il faut faire maintenant)
 
-✅ Réalisations
-⚠️  Points d'attention
-🔴 Blocages critiques
-👥 Équipe
-📋 Actions prioritaires
+---
+*Note : Sois diplomate mais direct. Si les données manquent, mentionne-le clairement.*
 """
 
-FALLBACK_RESPONSES = {
-    "rapport":  "⚠️ Impossible de générer le rapport complet pour l'instant. "
-                "Redmine est peut-être inaccessible. "
-                "Vérifiez que http://localhost:3000 est accessible et réessayez.",
-
-    "general":  "⚠️ Impossible de récupérer les informations du projet. "
-                "Vérifiez la connexion à Redmine et réessayez.",
-
-    "default":  "⚠️ L'Agent Rapporteur a rencontré une erreur. "
-                "Le reste du système fonctionne normalement. "
-                "Essayez de reformuler votre question.",
+FALLBACK_MESSAGES = {
+    "rapport": "⚠️ Désolé, je n'ai pas pu générer le rapport complet. Redmine est peut-être inaccessible.",
+    "default": "⚠️ L'Agent Rapporteur est momentanément indisponible. L'analyse technique reste fonctionnelle."
 }
 
-MAX_RETRIES = 2
+def rapporteur_node(state: AgentState) -> AgentState:
+    """Noeud de synthèse utilisant un modèle fluide (Mistral 7B / Trinity Mini)."""
+    from services.llm_client import get_llm
+    
+    llm = get_llm("rapporteur")
+    llm_with_tools = llm.bind_tools(RAPPORTEUR_TOOLS)
+    tool_node = ToolNode(RAPPORTEUR_TOOLS)
 
-
-def _run_rapporteur(state: AgentState, llm_with_tools, tool_node) -> str:
-    """Exécute la boucle ReAct de l'agent rapporteur."""
-    last_question = ""
-    for msg in reversed(state["messages"]):
-        if isinstance(msg, HumanMessage):
-            last_question = msg.content
-            break
-
-    today  = str(date.today())
-    system = RAPPORTEUR_SYSTEM.format(
-        project_id = state["project_id"],
-        today      = today,
+    last_question = next(
+        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), 
+        "Générer un rapport d'activité"
     )
 
-    messages = [
-        SystemMessage(content=system),
-        HumanMessage(
-            content=f"Projet : {state['project_id']}\n"
-                    f"Intention : {state['intent']}\n"
-                    f"Demande : {last_question}"
-        ),
+    # Contexte de travail local pour éviter de polluer l'historique global
+    working_messages = [
+        SystemMessage(content=RAPPORTEUR_SYSTEM.format(
+            project_id=state["project_id"], 
+            today=str(date.today())
+        )),
+        HumanMessage(content=f"Demande de synthèse pour {state['project_id']} : {last_question}")
     ]
 
-    for _ in range(5):
-        response = llm_with_tools.invoke(messages)
-        messages.append(response)
-        if response.tool_calls:
-            tool_results = tool_node.invoke({"messages": messages})
-            messages.extend(tool_results["messages"])
-        else:
-            break
-
-    return messages[-1].content if messages else ""
-
-
-def rapporteur_node(state: AgentState) -> AgentState:
-    """
-    Nœud Agent Rapporteur avec résilience complète.
-    Totalement indépendant de l'Agent Analyse —
-    une erreur ici n'affecte pas l'Agent Analyse et vice versa.
-    """
-    from services.llm_client import get_llm
-
-    attempt    = 0
-    last_error = ""
-
-    while attempt < MAX_RETRIES:
+    attempt = 0
+    max_retries = 2
+    
+    while attempt < max_retries:
         attempt += 1
         try:
-            logger.info(f"Agent Rapporteur — tentative {attempt}/{MAX_RETRIES}")
+            # Cycle Tool-Calling (max 5 itérations pour collecter les infos de synthèse)
+            for i in range(5):
+                response = llm_with_tools.invoke(working_messages)
+                working_messages.append(response)
+                
+                if response.tool_calls:
+                    logger.info(f"📝 Agent Rapporteur collecte des données (itération {i+1})")
+                    tool_output = tool_node.invoke({"messages": working_messages})
+                    working_messages.extend(tool_output["messages"])
+                else:
+                    break
 
-            llm            = get_llm()
-            llm_with_tools = llm.bind_tools(RAPPORTEUR_TOOLS)
-            tool_node      = ToolNode(RAPPORTEUR_TOOLS)
+            final_text = working_messages[-1].content or ""
+            if not final_text:
+                raise ValueError("Réponse vide générée par le Rapporteur.")
 
-            final = _run_rapporteur(state, llm_with_tools, tool_node)
-
-            if not final:
-                raise ValueError("Réponse vide de l'agent")
-
-            # ✅ Succès
-            logger.info("Agent Rapporteur — succès")
             return {
                 **state,
-                "agent_result":  final,
-                "final_answer":  final,
-                "agent_status":  "success",
-                "agent_error":   "",
-                "retry_count":   attempt,
-                "messages":      state["messages"] + [AIMessage(content=final)],
+                "agent_result": final_text,
+                "final_answer": final_text,
+                "agent_status": "success",
+                "retry_count": attempt,
+                "messages": state["messages"] + [AIMessage(content=final_text)]
             }
 
-        except ConnectionError as e:
-            last_error = f"Redmine inaccessible : {str(e)}"
-            logger.warning(f"Agent Rapporteur — {last_error}")
-            break
-
         except Exception as e:
-            last_error = str(e)
-            logger.error(f"Agent Rapporteur — erreur tentative {attempt} : {e}")
-            if attempt < MAX_RETRIES:
-                logger.info("Agent Rapporteur — nouvelle tentative...")
+            logger.error(f"❌ Erreur Agent Rapporteur (Tentative {attempt}/{max_retries}) : {e}")
+            if attempt < max_retries:
                 continue
             break
 
-    # ❌ Toutes les tentatives ont échoué → réponse dégradée
-    intent   = state.get("intent", "default")
-    fallback = FALLBACK_RESPONSES.get(intent, FALLBACK_RESPONSES["default"])
-    error_msg = f"{fallback}\n\n_Erreur technique : {last_error}_"
-
-    logger.error(f"Agent Rapporteur — abandon après {attempt} tentatives : {last_error}")
-
+    # Gestion du Fallback contextuel
+    intent = state.get("intent", "default")
+    fallback_txt = FALLBACK_MESSAGES.get(intent, FALLBACK_MESSAGES["default"])
+    
     return {
         **state,
-        "agent_result":  error_msg,
-        "final_answer":  error_msg,
-        "agent_status":  "error",
-        "agent_error":   last_error,
-        "retry_count":   attempt,
-        "messages":      state["messages"] + [AIMessage(content=error_msg)],
+        "final_answer": fallback_txt,
+        "agent_status": "error",
+        "agent_error": str(e) if 'e' in locals() else "Timeout",
+        "messages": state["messages"] + [AIMessage(content=fallback_txt)]
     }

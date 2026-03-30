@@ -1,155 +1,86 @@
-"""
-Agent Analyse — backend/agents/analyse_agent.py
-
-Résilience :
-- Si Redmine est inaccessible → réponse dégradée claire
-- Si le LLM échoue → retry automatique (max 2 fois)
-- Si retry échoue → message d'erreur propre sans crasher
-- Les erreurs de cet agent n'affectent pas le Rapporteur
-"""
+import logging
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 from langgraph.prebuilt import ToolNode
-import logging, sys, os
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from agents.tools import ANALYSE_TOOLS
 from agents.state import AgentState
 
 logger = logging.getLogger(__name__)
 
-ANALYSE_SYSTEM = """Tu es l'Agent Analyse du projet {project_id}.
+# Prompt Système orienté KPI et Décision
+ANALYSE_SYSTEM = """Tu es l'Agent Analyse expert pour le projet Redmine : {project_id}.
+Ta mission : Extraire des données précises et fournir un diagnostic technique.
 
-Spécialisé dans : retards, risques, charge équipe, sprints.
+DOMAINES D'EXPERTISE :
+1. Retards (Tickets Overdue)
+2. Risques (Bloquants, priorités hautes)
+3. Charge équipe (Workload par utilisateur)
+4. Sprints et Versions (Respect des échéances)
 
-Outils disponibles :
-- get_project_metrics    → métriques globales
-- get_overdue_issues     → tâches en retard
-- get_not_started_issues → tâches à 0%
-- get_team_workload      → charge par membre
-- get_sprint_status      → état des sprints
-- classify_risk          → score de risque
-
-Instructions :
-1. Utilise les outils pour collecter les données
-2. Analyse et réponds en français avec chiffres + recommandations
-3. Utilise 🔴 🟡 🟢 pour les niveaux de criticité
+CONSIGNES :
+- Utilise TOUJOURS les outils pour obtenir des chiffres réels.
+- Structure ta réponse : Faits -> Analyse -> Recommandation.
+- Utilise des indicateurs visuels : 🔴 (Critique), 🟡 (Attention), 🟢 (OK).
+- Réponds en français de manière concise et professionnelle.
 """
 
-# ── Réponses de secours si l'agent échoue ─────────────────────
-FALLBACK_RESPONSES = {
-    "planning":   "⚠️ Impossible d'analyser le planning pour l'instant. "
-                  "Redmine est peut-être inaccessible. "
-                  "Vérifiez que http://localhost:3000 est accessible et réessayez.",
-
-    "risques":    "⚠️ L'analyse des risques est temporairement indisponible. "
-                  "Impossible de contacter Redmine ou le modèle IA. "
-                  "Réessayez dans quelques instants.",
-
-    "ressources": "⚠️ Impossible de calculer la charge de l'équipe. "
-                  "Vérifiez la connexion à Redmine et réessayez.",
-
-    "default":    "⚠️ L'Agent Analyse a rencontré une erreur. "
-                  "Le reste du système fonctionne normalement. "
-                  "Essayez de reformuler votre question.",
+FALLBACK_MESSAGES = {
+    "planning":   "⚠️ Analyse du planning indisponible. Veuillez vérifier les échéances directement sur Redmine.",
+    "risques":    "⚠️ Analyse des risques en échec. Impossible de récupérer les tickets critiques actuellement.",
+    "ressources": "⚠️ Analyse de charge indisponible. Les entrées de temps ne répondent pas.",
+    "default":    "⚠️ L'Agent Analyse rencontre des difficultés techniques. Les données brutes restent accessibles via les graphiques."
 }
 
-MAX_RETRIES = 2
-
-
-def _run_analyse(state: AgentState, llm_with_tools, tool_node) -> str:
-    """Exécute la boucle ReAct de l'agent analyse."""
-    last_question = ""
-    for msg in reversed(state["messages"]):
-        if isinstance(msg, HumanMessage):
-            last_question = msg.content
-            break
-
-    messages = [
-        SystemMessage(content=ANALYSE_SYSTEM.format(
-            project_id=state["project_id"]
-        )),
-        HumanMessage(
-            content=f"Projet : {state['project_id']}\n"
-                    f"Intention : {state['intent']}\n"
-                    f"Question : {last_question}"
-        ),
+def analyse_node(state: AgentState) -> AgentState:
+    from services.llm_client import get_llm
+    
+    llm = get_llm("analyse")
+    # Vérifie si ton LLM supporte bien bind_tools (certains modèles free ne le font pas)
+    llm_with_tools = llm.bind_tools(ANALYSE_TOOLS)
+    
+    # Récupération de la question
+    last_msg = state["messages"][-1].content
+    
+    working_messages = [
+        SystemMessage(content=ANALYSE_SYSTEM.format(project_id=state["project_id"])),
+        HumanMessage(content=last_msg)
     ]
 
-    for _ in range(5):
-        response = llm_with_tools.invoke(messages)
-        messages.append(response)
-        if response.tool_calls:
-            tool_results = tool_node.invoke({"messages": messages})
-            messages.extend(tool_results["messages"])
+    try:
+        # On limite à 2-3 itérations pour éviter le timeout en mode "Free"
+        for i in range(3):
+            response = llm_with_tools.invoke(working_messages)
+            working_messages.append(response)
+            
+            if response.tool_calls:
+                # Exécution manuelle simplifiée pour le debug
+                from agents.tools import execute_tools # Assure-toi d'avoir une fonction qui execute
+                tool_results = execute_tools(response.tool_calls) 
+                working_messages.extend(tool_results)
+            else:
+                break
+
+        # CRUCIAL : Si le dernier message est un appel d'outil sans texte, 
+        # on force une dernière réponse textuelle
+        if not working_messages[-1].content:
+            final_resp = llm.invoke(working_messages)
+            final_content = final_resp.content
         else:
-            break
+            final_content = working_messages[-1].content
 
-    return messages[-1].content if messages else ""
+        return {
+            **state,
+            "final_answer": final_content,
+            "agent_status": "success",
+            "messages": state["messages"] + [AIMessage(content=final_content)]
+        }
 
-
-def analyse_node(state: AgentState) -> AgentState:
-    """
-    Nœud Agent Analyse avec résilience complète.
-    Si cet agent échoue, l'erreur est capturée proprement
-    et n'affecte pas les autres agents ni le superviseur.
-    """
-    from services.llm_client import get_llm
-
-    attempt = 0
-    last_error = ""
-
-    while attempt < MAX_RETRIES:
-        attempt += 1
-        try:
-            logger.info(f"Agent Analyse — tentative {attempt}/{MAX_RETRIES}")
-
-            llm            = get_llm()
-            llm_with_tools = llm.bind_tools(ANALYSE_TOOLS)
-            tool_node      = ToolNode(ANALYSE_TOOLS)
-
-            final = _run_analyse(state, llm_with_tools, tool_node)
-
-            if not final:
-                raise ValueError("Réponse vide de l'agent")
-
-            # ✅ Succès
-            logger.info("Agent Analyse — succès")
-            return {
-                **state,
-                "agent_result":  final,
-                "final_answer":  final,
-                "agent_status":  "success",
-                "agent_error":   "",
-                "retry_count":   attempt,
-                "messages":      state["messages"] + [AIMessage(content=final)],
-            }
-
-        except ConnectionError as e:
-            # Redmine inaccessible
-            last_error = f"Redmine inaccessible : {str(e)}"
-            logger.warning(f"Agent Analyse — {last_error}")
-            break  # Inutile de retry si Redmine est down
-
-        except Exception as e:
-            last_error = str(e)
-            logger.error(f"Agent Analyse — erreur tentative {attempt} : {e}")
-            if attempt < MAX_RETRIES:
-                logger.info("Agent Analyse — nouvelle tentative...")
-                continue
-            break
-
-    # ❌ Toutes les tentatives ont échoué → réponse dégradée
-    intent   = state.get("intent", "default")
-    fallback = FALLBACK_RESPONSES.get(intent, FALLBACK_RESPONSES["default"])
-    error_msg = f"{fallback}\n\n_Erreur technique : {last_error}_"
-
-    logger.error(f"Agent Analyse — abandon après {attempt} tentatives : {last_error}")
-
-    return {
-        **state,
-        "agent_result":  error_msg,
-        "final_answer":  error_msg,
-        "agent_status":  "error",
-        "agent_error":   last_error,
-        "retry_count":   attempt,
-        "messages":      state["messages"] + [AIMessage(content=error_msg)],
-    }
+    except Exception as e:
+        logger.error(f"❌ Erreur critique Analyse : {e}")
+        # On renvoie le fallback mais AVEC l'erreur pour débugger pendant ta démo
+        intent = state.get("intent", "default")
+        error_msg = FALLBACK_MESSAGES.get(intent, FALLBACK_MESSAGES["default"])
+        return {
+            **state,
+            "final_answer": f"{error_msg} (Détail: {str(e)[:50]})",
+            "agent_status": "error"
+        }

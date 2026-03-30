@@ -1,47 +1,28 @@
-import os
-from pathlib import Path
-from pydantic_settings import BaseSettings
-from functools import lru_cache
+from pydantic_settings import BaseSettings, SettingsConfigDict
 from typing import Optional
 
-# Chemin absolu du dossier backend
-BASE_DIR = Path(__file__).resolve().parent
-
 class Settings(BaseSettings):
-    # On définit juste les types. Pydantic remplira les valeurs depuis le .env automatiquement.
-    
-    # ── LLM OpenRouter ────────────────────────────────────────
-    llm_provider: str
+    # Les noms doivent être identiques au .env (en minuscules ou majuscules)
     openrouter_api_key: str
-    llm_model_name: str
-
-    # ── Redmine ───────────────────────────────────────────────
     redmine_url: str
     redmine_api_key: str
+    
+    # Modèles LLM
+    llm_supervisor: str
+    llm_analyse: str
+    llm_rapporteur: str
+    llm_fallback: str
+    
+    # Autres paramètres
+    app_name: str = "PM Assistant"
+    database_url: Optional[str] = None
+    debug: bool = True
 
-    # ── PostgreSQL ────────────────────────────────────────────
-    database_url: str
+    # Configuration du chargement
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        env_file_encoding="utf-8",
+        extra="ignore"  # Pour ne pas planter avec les commentaires ou variables en trop
+    )
 
-    # ── App ───────────────────────────────────────────────────
-    app_name: str
-    secret_key: str
-    debug: bool = True # On peut laisser une valeur par défaut non sensible
-
-    class Config:
-        env_file = BASE_DIR / ".env"
-        env_file_encoding = "utf-8"
-        extra = "ignore"
-
-@lru_cache()
-def get_settings() -> Settings:
-    try:
-        s = Settings()
-        # On ne print plus la clé, juste un message de succès
-        print(f"✅ Configuration chargée avec succès pour : {s.app_name}")
-        return s
-    except Exception as e:
-        print(f"❌ ERREUR de configuration : {e}")
-        # Ceci s'affichera si une variable manque dans ton .env
-        raise e
-
-settings = get_settings()
+settings = Settings()

@@ -1,13 +1,9 @@
-"""
-Router FastAPI — backend/api/chat.py
-Retourne maintenant answer + display_type + data
-pour que Streamlit sache quoi afficher.
-"""
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 from typing import Optional
-import json
+import logging
 
+logger = logging.getLogger(__name__)
 router = APIRouter()
 
 class ChatRequest(BaseModel):
@@ -21,59 +17,63 @@ class ChatResponse(BaseModel):
     intent:       str
     agent_used:   str
     project_id:   str
-    display_type: str   # "text" | "gantt" | "risk_table" | "workload" | "report"
-    data:         dict  # données brutes pour le composant Streamlit
-
-
+    display_type: str
+    data:         dict
 @router.post("/chat", response_model=ChatResponse)
 async def chat(req: ChatRequest):
     try:
-        from agents.supervisor import run_agent
+        try:
+            from agents.supervisor_agent import run_agent
+        except ImportError:
+            # Fallback si lancé d'un autre dossier
+            import sys
+            import os
+            sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+            from agents.supervisor_agent import run_agent
+        
+        # 2. APPEL DE L'AGENT
+        logger.info(f"🚀 Question reçue pour le projet {req.project_id}: {req.question}")
+        
         result = run_agent(
-            question   = req.question,
-            project_id = req.project_id,
-            user_id    = req.user_id,
-            history    = req.history,
+            question=req.question,
+            project_id=str(req.project_id),
+            user_id=req.user_id,
+            history=req.history
         )
-
-        # Déterminer le display_type selon l'intention
-        intent       = result.get("intent", "general")
+        
+        # 3. ANALYSE ET AFFICHAGE
+        intent = result.get("intent", "general")
         display_type = _get_display_type(intent, req.question)
-        data         = _get_display_data(display_type, req.project_id)
+        data = _get_display_data(display_type, req.project_id)
 
         return ChatResponse(
-            answer       = result["answer"],
+            answer       = result.get("answer", "Désolé, l'agent n'a pas pu formuler de réponse."),
             intent       = intent,
-            agent_used   = result.get("agent_used", ""),
+            agent_used   = result.get("agent_used", "supervisor"),
             project_id   = req.project_id,
             display_type = display_type,
             data         = data,
         )
+
     except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
+        logger.error(f"❌ Erreur critique dans /chat : {str(e)}")
+        import traceback
+        logger.error(traceback.format_exc()) 
+        raise HTTPException(status_code=500, detail=f"Erreur interne : {str(e)}")
+    
 def _get_display_type(intent: str, question: str) -> str:
-    """Détermine le type d'affichage selon l'intention et les mots-clés."""
     q = question.lower()
-
-    # Mots-clés graphique / visuel
-    if any(k in q for k in ["graphique", "gantt", "planning", "sprint", "timeline", "calendrier"]):
+    if any(k in q for k in ["graphique", "gantt", "planning", "sprint", "timeline"]):
         return "gantt"
-
-    if any(k in q for k in ["risque", "risk", "score", "danger", "critique"]):
+    if any(k in q for k in ["risque", "risk", "danger", "critique"]):
         return "risk_table"
-
-    if any(k in q for k in ["charge", "surcharge", "équipe", "workload", "ressource"]):
+    if any(k in q for k in ["charge", "équipe", "workload", "ressource"]):
         return "workload"
-
-    if any(k in q for k in ["rapport", "report", "statut", "synthèse", "résumé", "réunion"]):
+    if any(k in q for k in ["rapport", "report", "synthèse", "résumé"]):
         return "report"
-
-    if any(k in q for k in ["retard", "en retard", "bloqué", "tâche"]):
+    if any(k in q for k in ["retard", "bloqué", "tâche", "overdue"]):
         return "issues_table"
 
-    # Par défaut selon l'intention
     mapping = {
         "planning":   "gantt",
         "risques":    "risk_table",
@@ -85,59 +85,50 @@ def _get_display_type(intent: str, question: str) -> str:
 
 
 def _get_display_data(display_type: str, project_id: str) -> dict:
-    """Récupère les données brutes pour le composant Streamlit."""
     try:
         from services.redmine_client import redmine
 
         if display_type == "gantt":
-            versions = redmine.get_versions(project_id)
-            issues   = redmine.get_issues(project_id, status="*")
-            return {"versions": versions, "issues": issues}
-
+            return {
+                "versions": redmine.get_versions(project_id),
+                "issues": redmine.get_issues(project_id, status="*")
+            }
         elif display_type == "risk_table":
-            issues  = redmine.get_issues(project_id, status="open")
-            metrics = redmine.compute_project_metrics(project_id)
-            return {"issues": issues, "metrics": metrics}
-
+            return {
+                "issues": redmine.get_issues(project_id, status="open"),
+                "metrics": redmine.compute_project_metrics(project_id)
+            }
         elif display_type == "workload":
-            time_by_user = redmine.get_time_by_user(project_id)
-            members      = redmine.get_project_members(project_id)
-            return {"time_by_user": time_by_user, "members": members}
-
+            return {
+                "time_by_user": redmine.get_time_by_user(project_id),
+                "members": redmine.get_project_members(project_id)
+            }
         elif display_type == "report":
-            metrics  = redmine.compute_project_metrics(project_id)
-            versions = redmine.get_versions(project_id)
-            news     = redmine.get_news(project_id)
-            return {"metrics": metrics, "versions": versions, "news": news}
-
+            return {
+                "metrics": redmine.compute_project_metrics(project_id),
+                "versions": redmine.get_versions(project_id),
+                "news": redmine.get_news(project_id)
+            }
         elif display_type == "issues_table":
-            overdue = redmine.get_overdue_issues(project_id)
-            return {"issues": overdue}
-
+            return {"issues": redmine.get_overdue_issues(project_id)}
+            
         return {}
-    except Exception:
+    except Exception as e:
+        logger.warning(f"⚠️ Impossible de charger les data visuelles ({display_type}): {e}")
         return {}
-
 
 @router.get("/projects/{project_id}/metrics")
 async def get_metrics(project_id: str):
     try:
         from services.redmine_client import redmine
-        metrics = redmine.compute_project_metrics(project_id)
+        m = redmine.compute_project_metrics(project_id)
         return {
-            "avancement": metrics["avg_progress"],
-            "retard":     metrics["overdue_issues"],
-            "risques":    3,
+            "avancement": m.get("avg_progress", 0),
+            "retard":     m.get("overdue_issues", 0),
+            "risques":    m.get("critical_issues", 3),
             "charge":     87,
             "delta":      8,
         }
     except Exception as e:
+        logger.error(f"❌ Erreur GET /metrics : {e}")
         raise HTTPException(status_code=500, detail=str(e))
-
-
-@router.get("/alerts/{project_id}")
-async def get_alerts(project_id: str):
-    from services.monitor import get_alerts, clear_alerts
-    alerts = get_alerts(project_id)
-    clear_alerts(project_id)
-    return {"project_id": project_id, "alerts": alerts}

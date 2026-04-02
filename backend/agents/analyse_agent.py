@@ -1,86 +1,123 @@
-import logging
+"""
+Agent Analyse — backend/agents/analyse_agent.py
+Corrigé : utilise ToolNode de langgraph (pas execute_tools)
+"""
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-from langgraph.prebuilt import ToolNode
-from agents.tools import ANALYSE_TOOLS
+from langgraph.prebuilt import ToolNode   # ← correct
+import logging, time, sys, os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
+from agents.tools import ANALYSE_TOOLS   # ← pas execute_tools
 from agents.state import AgentState
 
 logger = logging.getLogger(__name__)
 
-# Prompt Système orienté KPI et Décision
-ANALYSE_SYSTEM = """Tu es l'Agent Analyse expert pour le projet Redmine : {project_id}.
-Ta mission : Extraire des données précises et fournir un diagnostic technique.
+ANALYSE_SYSTEM = """Tu es l'Agent Analyse du projet Redmine.
 
-DOMAINES D'EXPERTISE :
-1. Retards (Tickets Overdue)
-2. Risques (Bloquants, priorités hautes)
-3. Charge équipe (Workload par utilisateur)
-4. Sprints et Versions (Respect des échéances)
+PROJET ACTIF : {project_id}
 
-CONSIGNES :
-- Utilise TOUJOURS les outils pour obtenir des chiffres réels.
-- Structure ta réponse : Faits -> Analyse -> Recommandation.
-- Utilise des indicateurs visuels : 🔴 (Critique), 🟡 (Attention), 🟢 (OK).
-- Réponds en français de manière concise et professionnelle.
+IMPORTANT : Tu connais déjà le projet actif — c'est "{project_id}".
+NE DEMANDE JAMAIS l'identifiant du projet à l'utilisateur.
+Utilise DIRECTEMENT "{project_id}" dans tous tes appels d'outils.
+
+Outils disponibles :
+- get_project_metrics("{project_id}")    → métriques globales
+- get_overdue_issues("{project_id}")     → tâches en retard
+- get_not_started_issues("{project_id}") → tâches à 0%
+- get_team_workload("{project_id}")      → charge équipe
+- get_sprint_status("{project_id}")      → état des sprints
+- classify_risk("{project_id}")          → score de risque
+
+Réponds en français avec chiffres précis + recommandations + 🔴🟡🟢
 """
 
-FALLBACK_MESSAGES = {
-    "planning":   "⚠️ Analyse du planning indisponible. Veuillez vérifier les échéances directement sur Redmine.",
-    "risques":    "⚠️ Analyse des risques en échec. Impossible de récupérer les tickets critiques actuellement.",
-    "ressources": "⚠️ Analyse de charge indisponible. Les entrées de temps ne répondent pas.",
-    "default":    "⚠️ L'Agent Analyse rencontre des difficultés techniques. Les données brutes restent accessibles via les graphiques."
+FALLBACK_MSG = {
+    "planning":   "⚠️ Analyse planning indisponible. Réessayez dans 1 minute.",
+    "risques":    "⚠️ Analyse risques indisponible. Réessayez dans 1 minute.",
+    "ressources": "⚠️ Analyse charge indisponible. Réessayez dans 1 minute.",
+    "default":    "⚠️ Agent Analyse indisponible. Réessayez dans 1 minute.",
 }
 
+
 def analyse_node(state: AgentState) -> AgentState:
+    """Agent Analyse — corrigé avec ToolNode."""
     from services.llm_client import get_llm
-    
-    llm = get_llm("analyse")
-    # Vérifie si ton LLM supporte bien bind_tools (certains modèles free ne le font pas)
-    llm_with_tools = llm.bind_tools(ANALYSE_TOOLS)
-    
-    # Récupération de la question
-    last_msg = state["messages"][-1].content
-    
-    working_messages = [
-        SystemMessage(content=ANALYSE_SYSTEM.format(project_id=state["project_id"])),
-        HumanMessage(content=last_msg)
-    ]
 
-    try:
-        # On limite à 2-3 itérations pour éviter le timeout en mode "Free"
-        for i in range(3):
-            response = llm_with_tools.invoke(working_messages)
-            working_messages.append(response)
-            
-            if response.tool_calls:
-                # Exécution manuelle simplifiée pour le debug
-                from agents.tools import execute_tools # Assure-toi d'avoir une fonction qui execute
-                tool_results = execute_tools(response.tool_calls) 
-                working_messages.extend(tool_results)
-            else:
-                break
+    project_id = state["project_id"]
 
-        # CRUCIAL : Si le dernier message est un appel d'outil sans texte, 
-        # on force une dernière réponse textuelle
-        if not working_messages[-1].content:
-            final_resp = llm.invoke(working_messages)
-            final_content = final_resp.content
-        else:
-            final_content = working_messages[-1].content
+    last_question = next(
+        (m.content for m in reversed(state["messages"])
+         if isinstance(m, HumanMessage)), ""
+    )
 
-        return {
-            **state,
-            "final_answer": final_content,
-            "agent_status": "success",
-            "messages": state["messages"] + [AIMessage(content=final_content)]
-        }
+    for attempt in range(3):
+        try:
+            llm            = get_llm("analyse")
+            llm_with_tools = llm.bind_tools(ANALYSE_TOOLS)
+            tool_node      = ToolNode(ANALYSE_TOOLS)   # ← ToolNode correct
 
-    except Exception as e:
-        logger.error(f"❌ Erreur critique Analyse : {e}")
-        # On renvoie le fallback mais AVEC l'erreur pour débugger pendant ta démo
-        intent = state.get("intent", "default")
-        error_msg = FALLBACK_MESSAGES.get(intent, FALLBACK_MESSAGES["default"])
-        return {
-            **state,
-            "final_answer": f"{error_msg} (Détail: {str(e)[:50]})",
-            "agent_status": "error"
-        }
+            messages = [
+                SystemMessage(content=ANALYSE_SYSTEM.format(
+                    project_id=project_id
+                )),
+                HumanMessage(content=(
+                    f"Projet actif : {project_id}\n"
+                    f"Intention : {state.get('intent', '')}\n"
+                    f"Question : {last_question}\n\n"
+                    f"Utilise le project_id='{project_id}' "
+                    f"dans tous tes appels d'outils."
+                )),
+            ]
+
+            # Boucle ReAct
+            for _ in range(6):
+                response = llm_with_tools.invoke(messages)
+                messages.append(response)
+
+                if response.tool_calls:
+                    # Exécuter les outils via ToolNode
+                    tool_results = tool_node.invoke({"messages": messages})
+                    messages.extend(tool_results["messages"])
+                else:
+                    break
+
+            final = messages[-1].content or ""
+            if not final:
+                raise ValueError("Réponse vide")
+
+            logger.info(f"Agent Analyse — succès (tentative {attempt+1})")
+            return {
+                **state,
+                "agent_result":  final,
+                "final_answer":  final,
+                "agent_status":  "success",
+                "agent_error":   "",
+                "retry_count":   attempt + 1,
+                "messages":      state["messages"] + [AIMessage(content=final)],
+            }
+
+        except Exception as e:
+            err = str(e)
+            logger.warning(f"Agent Analyse tentative {attempt+1} : {err[:100]}")
+
+            if "429" in err or "rate" in err.lower():
+                wait = (attempt + 1) * 5
+                logger.info(f"Attente {wait}s avant retry...")
+                time.sleep(wait)
+                continue
+            elif attempt < 2:
+                continue
+            break
+
+    intent   = state.get("intent", "default")
+    fallback = FALLBACK_MSG.get(intent, FALLBACK_MSG["default"])
+    logger.error("Agent Analyse — abandon après 3 tentatives")
+
+    return {
+        **state,
+        "agent_result":  fallback,
+        "final_answer":  fallback,
+        "agent_status":  "error",
+        "agent_error":   err if 'err' in dir() else "erreur inconnue",
+        "retry_count":   3,
+        "messages":      state["messages"] + [AIMessage(content=fallback)],
+    }

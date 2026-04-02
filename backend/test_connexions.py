@@ -1,43 +1,62 @@
-import requests
-from config import settings
+"""
+Test des connexions — backend/test_connexions.py
+Lance : python test_connexions.py
+"""
+import sys, os
+sys.path.append(os.path.dirname(__file__))
 
-print("\n[3/3] Test connexion LLM (via Requests blindé)...")
+print("\n" + "="*55)
+print("  TEST CONNEXIONS — PM Assistant")
+print("="*55 + "\n")
 
-# Extraction propre de la clé
-api_key = settings.openrouter_api_key.strip() # .strip() pour enlever d'éventuels espaces invisibles
-
-headers = {
-    "Authorization": f"Bearer {api_key}",
-    "Content-Type": "application/json",
-    "HTTP-Referer": "http://localhost:8501", # Obligatoire pour OpenRouter
-    "X-Title": "PFE PM Assistant"
-}
-
-payload = {
-    # On utilise la variable chargée depuis le .env au lieu du texte en dur
-    "model": settings.llm_model_name, 
-    "messages": [{"role": "user", "content": "Réponds juste 'OK'."}],
-    "temperature": 0.1
-}
-
-print(f"DEBUG - Modèle utilisé pour ce test : {settings.llm_model_name}")
-
+# ── 1. Config ─────────────────────────────────────────────────
+print("[1/4] Configuration...")
 try:
-    response = requests.post(
-        "https://openrouter.ai/api/v1/chat/completions",
-        headers=headers,
-        json=payload,
-        verify=False, # On garde le bypass SSL pour l'instant
-        timeout=80
-    )
-
-    if response.status_code == 200:
-        res_data = response.json()
-        print(f"  ✓ LLM accessible ! Réponse : {res_data['choices'][0]['message']['content']}")
-    else:
-        print(f"  ✗ Erreur API {response.status_code} : {response.text}")
-        # DEBUG : Affiche les headers envoyés (SANS LA CLÉ ENTIÈRE)
-        print(f"  DEBUG Headers envoyés : Authorization: Bearer {api_key[:10]}...")
-
+    from config import settings
+    print(f"  ✓ OpenRouter key : {settings.openrouter_api_key[:20]}...")
+    print(f"  ✓ Groq key       : {settings.groq_api_key[:20]}...")
+    print(f"  ✓ Superviseur    : {settings.llm_supervisor}")
+    print(f"  ✓ Analyse        : {settings.llm_analyse} (Groq)")
+    print(f"  ✓ Rapporteur     : {settings.llm_rapporteur}")
+    print(f"  ✓ Fallback       : {settings.llm_fallback}")
 except Exception as e:
-    print(f"  ✗ Erreur fatale : {e}")
+    print(f"  ✗ Erreur : {e}")
+    sys.exit(1)
+
+# ── 2. Redmine ────────────────────────────────────────────────
+print("\n[2/4] Redmine...")
+try:
+    from services.redmine_client import redmine
+    projects = redmine.get_projects()
+    print(f"  ✓ {len(projects)} projet(s) trouvé(s)")
+    for p in projects:
+        print(f"    • {p['name']} ({p['identifier']})")
+except Exception as e:
+    print(f"  ✗ Redmine : {e}")
+
+# ── 3. Groq (Agent Analyse) ───────────────────────────────────
+print("\n[3/4] Groq — Agent Analyse...")
+try:
+    from services.llm_client import get_llm
+    from langchain_core.messages import HumanMessage
+    llm = get_llm("analyse")
+    r   = llm.invoke([HumanMessage(content="Réponds uniquement 'OK'.")])
+    print(f"  ✓ Groq accessible — réponse : {r.content[:30]}")
+except Exception as e:
+    print(f"  ✗ Groq : {e}")
+
+# ── 4. OpenRouter (Superviseur + Rapporteur) ──────────────────
+print("\n[4/4] OpenRouter — Superviseur & Rapporteur...")
+try:
+    llm = get_llm("supervisor")
+    r   = llm.invoke([HumanMessage(content="Réponds uniquement 'OK'.")])
+    print(f"  ✓ Superviseur accessible — réponse : {r.content[:30]}")
+    llm2 = get_llm("rapporteur")
+    r2   = llm2.invoke([HumanMessage(content="Réponds uniquement 'OK'.")])
+    print(f"  ✓ Rapporteur accessible — réponse : {r2.content[:30]}")
+except Exception as e:
+    print(f"  ✗ OpenRouter : {e}")
+
+print("\n" + "="*55)
+print("  Tests terminés !")
+print("="*55 + "\n")

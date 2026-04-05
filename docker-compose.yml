@@ -1,1 +1,39 @@
- 
+services:
+  redmine-mysql:
+    image: mysql:5.7
+    container_name: redmine-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: redmine_db
+      MYSQL_USER: redmine
+      MYSQL_PASSWORD: redminepass
+    volumes:
+      - mysql_data_ancien:/var/lib/mysql
+    networks:
+      - pfe-network
+
+  # 2. Serveur Redmine (Configuration de 11h24)
+  redmine:
+    image: redmine:latest
+    container_name: redmine
+    ports:
+      - "3000:3000"
+    environment:
+      REDMINE_DB_MYSQL: redmine-mysql
+      REDMINE_DB_DATABASE: redmine_db
+      REDMINE_DB_USERNAME: redmine
+      REDMINE_DB_PASSWORD: redminepass
+    depends_on:
+      - redmine-mysql
+    networks:
+      - pfe-network
+
+# --- DÉFINITIONS GLOBALES (Vérifie bien l'indentation ici) ---
+networks:
+  pfe-network:
+    driver: bridge
+
+volumes:
+  mysql_data_ancien:
+    external: true
+    name: da1ffb06daa42b29b172c161576e66fe98fb83a0b5c1a058093090498dc1ba18

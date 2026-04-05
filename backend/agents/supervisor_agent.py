@@ -1,10 +1,12 @@
+"""
+Agent Superviseur — backend/agents/supervisor_agent.py
+"""
 import json
 import logging
-import traceback
 from typing import Literal
 
 from langgraph.graph import StateGraph, END
-from langchain_core.messages import HumanMessage, SystemMessage
+from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
 
 from agents.state import AgentState
 from agents.analyse_agent import analyse_node
@@ -13,136 +15,189 @@ from services.llm_client import get_llm
 
 logger = logging.getLogger(__name__)
 
-SUPERVISOR_SYSTEM = """Tu es le Superviseur IA expert. Projet : {project_id}
-Réponds EXCLUSIVEMENT avec ce JSON :
+SUPERVISOR_SYSTEM = """Tu es le Superviseur IA d'un assistant de gestion de projet.
+NOM DU PROJET ACTIF : {project_name}
+ID DU PROJET ACTIF : {project_id}
+
+Analyse la question et retourne UN JSON avec "action" parmi :
+
+1. "hors_sujet" → Uniquement si la question n'a AUCUN rapport avec le travail, Redmine ou le projet (ex: météo, cuisine , santé). 
+   Retourne STRICTEMENT : "Je suis un assistant spécialisé en gestion de projet. Posez-moi une question à propos du projet."
+
+2. "clarification" → La question concerne le projet mais est trop vague (ex: "fais quelque chose").
+   NOTE : Si l'utilisateur demande le NOM ou l'ID du projet, RÉPONDS DIRECTEMENT dans "message" avec l'action "clarification" (ex: "Nous travaillons sur le projet {project_name}").
+
+3. "analyse" → Demandes de données chiffrées : retards, risques, charge équipe, sprints, métriques.
+
+4. "rapporteur" → Demandes de synthèse : rapport de statut, résumé, préparation de réunion.
+
+JSON attendu :
 {{
-  "intent": "planning" ou "risques" ou "rapport" ou "ressources" ou "general",
-  "next_agent": "analyse" ou "rapporteur",
-  "reasoning": "pourquoi"
-}}
-Routage : 
-- Choisis "analyse" si la question demande des chiffres, des tickets ou des données Redmine.
-- Choisis "rapporteur" pour les salutations ou les résumés simples."""
+  "action": "hors_sujet|clarification|analyse|rapporteur",
+  "intent": "hors_sujet|clarification|planning|risques|ressources|rapport|general",
+  "message": "Ta réponse si l'action est hors_sujet ou clarification, sinon vide",
+  "reasoning": "Pourquoi as-tu choisi cette action ?"
+}}"""
+
 def supervisor_node(state: AgentState) -> AgentState:
     llm = get_llm("supervisor")
-    
-    last_question = ""
-    for msg in reversed(state.get("messages", [])):
-        if isinstance(msg, HumanMessage):
-            last_question = msg.content
-            break
+
+    last_question = next(
+        (m.content for m in reversed(state.get("messages", []))
+         if isinstance(m, HumanMessage)), ""
+    )
 
     try:
         response = llm.invoke([
             SystemMessage(content=SUPERVISOR_SYSTEM.format(
-                user_id=state.get("user_id", "chef_projet"),
-                project_id=state.get("project_id", "inconnu")
+                project_id=state.get("project_id", "inconnu"),
+                project_name=state.get("project_name", "Projet Actuel")
             )),
             HumanMessage(content=last_question),
         ])
-        
+
         content = response.content.strip()
         if "```json" in content:
             content = content.split("```json")[1].split("```")[0].strip()
         elif "```" in content:
             content = content.split("```")[1].split("```")[0].strip()
-            
-        parsed = json.loads(content)
-        intent = parsed.get("intent", "general")
-        next_agent = parsed.get("next_agent", "rapporteur")
-        
-        logger.info(f"🎯 Superviseur a décidé : {next_agent} (Intention: {intent})")
-        
-    except Exception as e:
-        logger.error(f"⚠️ Erreur Parsing Superviseur : {e}")
-        intent = "general"
-        next_agent = "rapporteur"
 
-    return {**state, "intent": intent, "next_agent": next_agent}
+        parsed    = json.loads(content)
+        action    = parsed.get("action",    "rapporteur")
+        intent    = parsed.get("intent",    "general")
+        message   = parsed.get("message",  "")
+        reasoning = parsed.get("reasoning","")
+
+        logger.info(f"Superviseur → action={action}, intent={intent} | {reasoning}")
+
+    except Exception as e:
+        logger.error(f"Superviseur erreur : {e}")
+        action  = "rapporteur"
+        intent  = "general"
+        message = ""
+
+    # ── Hors sujet → réponse directe immédiate ────────────────
+    if action == "hors_sujet":
+        reply = message if message else (
+            "Je suis votre assistant de gestion de projet. "
+            "Je ne peux pas répondre à des questions non liées au projet. "
+            "Posez-moi des questions sur le planning, les risques, "
+            "l'équipe ou l'avancement du projet."
+        )
+        return {
+            **state,
+            "intent":       "hors_sujet",
+            "next_agent":   "end",
+            "final_answer": reply,
+            "agent_result": reply,
+            "agent_status": "success",
+            "agent_error":  "",
+            "retry_count":  0,
+            "messages":     state["messages"] + [AIMessage(content=reply)],
+        }
+
+    # ── Clarification → demande précision ────────────────────
+    if action == "clarification":
+        reply = message if message else (
+            "Pourriez-vous préciser votre demande ?\n"
+
+        )
+        return {
+            **state,
+            "intent":       "clarification",
+            "next_agent":   "end",
+            "final_answer": reply,
+            "agent_result": reply,
+            "agent_status": "success",
+            "agent_error":  "",
+            "retry_count":  0,
+            "messages":     state["messages"] + [AIMessage(content=reply)],
+        }
+
+    # ── Routing normal ────────────────────────────────────────
+    next_agent = action if action in ("analyse", "rapporteur") else "rapporteur"
+    return {
+        **state,
+        "intent":     intent,
+        "next_agent": next_agent,
+    }
+
 
 def route_after_supervisor(state: AgentState) -> Literal["analyse", "rapporteur"]:
-    return state.get("next_agent", "rapporteur")
+    next_agent = state.get("next_agent", "rapporteur")
+    if next_agent == "end":
+        return END
+    return next_agent
+
 
 def build_graph():
     workflow = StateGraph(AgentState)
-    workflow.add_node("supervisor", supervisor_node)
-    workflow.add_node("analyse", analyse_node)
-    workflow.add_node("rapporteur", rapporteur_node)
-    
+    workflow.add_node("supervisor",  supervisor_node)
+    workflow.add_node("analyse",     analyse_node)
+    workflow.add_node("rapporteur",  rapporteur_node)
     workflow.set_entry_point("supervisor")
     workflow.add_conditional_edges(
-        "supervisor", 
+        "supervisor",
         route_after_supervisor,
-        {"analyse": "analyse", "rapporteur": "rapporteur"}
+        {"analyse": "analyse", "rapporteur": "rapporteur", END: END}
     )
-    workflow.add_edge("analyse", END)
+    workflow.add_edge("analyse",    END)
     workflow.add_edge("rapporteur", END)
     return workflow.compile()
 
+
 graph = build_graph()
 
-def run_agent(question: str, project_id: str, user_id: str = "chef_projet", history: list = None):
-    # On force le project_id en string (très important pour Redmine)
-    p_id = str(project_id)
+
+def run_agent(
+    question:   str,
+    project_id: str,
+    project_name: str,
+    user_id:    str  = "chef_projet",
+    history:    list = None,
+) -> dict:
     messages = list(history or [])
     messages.append(HumanMessage(content=question))
-    
-    # ⚠️ INITIALISATION COMPLÈTE DU STATE ⚠️
-    # Toutes les clés définies dans ton AgentState DOIVENT être ici
-    initial_state = {
-        "messages": messages,
-        "project_id": p_id,
-        "user_id": user_id,
-        "intent": "general",
-        "next_agent": "rapporteur", # Valeur par défaut sécurisée
+
+    initial_state: AgentState = {
+        "messages":    messages,
+        "project_id":  str(project_id),
+        "user_id":     user_id,
+        "project_name": str(project_name),
+        "intent":      "general",
+        "next_agent":  "rapporteur",
         "agent_result": "",
-        "final_answer": "", 
+        "final_answer": "",
         "agent_status": "pending",
-        "agent_error": "",
-        "retry_count": 0
+        "agent_error":  "",
+        "retry_count":  0,
     }
 
     try:
-        # On lance le graphe
         result = graph.invoke(initial_state)
-        
-        # On vérifie que final_answer contient quelque chose
-        answer = result.get("final_answer")
-        if not answer:
-            answer = "L'analyse est terminée, mais je n'ai pas pu formuler de texte. Vérifiez les logs."
+
+        intent     = result.get("intent", "general")
+        answer     = result.get("final_answer", "")
+        agent_used = result.get("next_agent", "unknown")
+
+        # Si hors_sujet ou clarification → agent_used = "supervisor"
+        if intent in ("hors_sujet", "clarification"):
+            agent_used = "supervisor"
 
         return {
-            "answer": answer,
-            "intent": result.get("intent"),
-            "agent_used": result.get("next_agent"),
-            "project_id": p_id
-        }
-    except Exception as e:
-        # Capture l'erreur réelle dans le terminal pour ton diagnostic
-        print(f"❌ CRASH DU GRAPHE : {str(e)}")
-        import traceback
-        traceback.print_exc() 
-        return {
-            "answer": f"Désolé Youssef, une erreur interne est survenue : {str(e)}",
-            "intent": "error"
+            "answer":       answer or "Analyse terminée sans réponse.",
+            "intent":       intent,
+            "agent_used":   agent_used,
+            "agent_status": result.get("agent_status", "success"),
+            "project_id":   str(project_id),
         }
 
-    try:
-        result = graph.invoke(initial_state)
-        
-        print(f"✅ RÉPONSE GÉNÉRÉE : {result.get('next_agent')}")
-        
-        return {
-            "answer": result.get("final_answer") or "L'agent a terminé mais n'a pas produit de texte final.",
-            "intent": result.get("intent", "general"),
-            "agent_used": result.get("next_agent", "unknown"),
-            "project_id": p_id,
-        }
     except Exception as e:
-        print(f"❌ CRASH DANS LE GRAPHE :")
-        traceback.print_exc() # Affiche l'erreur exacte dans le terminal
+        logger.error(f"Crash du graphe : {e}")
+        import traceback; traceback.print_exc()
         return {
-            "answer": f"Erreur système : {str(e)}", 
-            "intent": "error", 
-            "agent_used": "none"
+            "answer":     f"Erreur système : {str(e)}",
+            "intent":     "error",
+            "agent_used": "none",
+            "project_id": str(project_id),
         }

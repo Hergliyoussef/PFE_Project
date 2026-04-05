@@ -17,7 +17,7 @@ def render_sidebar():
         st.title("⚙️ Configuration")
         
         if "user" in st.session_state:
-            st.markdown(f"**Utilisateur :** {st.session_state['user']['full_name']}")
+            st.markdown(f"**Project Manager :** {st.session_state['user']['full_name']}")
         
         st.divider()
 

@@ -67,11 +67,9 @@ def health():
         "project": "PM Assistant"
     }
 
-@app.get("/api/v1/alerts/{{project_id}}")
+@app.get("/api/v1/alerts/{project_id}")
 def get_alerts_endpoint(project_id: str):
-    """Endpoint appelé par Streamlit pour récupérer les alertes détectées."""
-    from services.monitor import get_alerts, clear_alerts
+    from services.monitor import get_alerts
+    # Enlève clear_alerts pour le test, pour être sûr que l'alerte reste dispo
     alerts = get_alerts(project_id)
-    # On vide les alertes après les avoir envoyées au Frontend
-    clear_alerts(project_id) 
     return {"project_id": project_id, "alerts": alerts}

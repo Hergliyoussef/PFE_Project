@@ -4,96 +4,118 @@ import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
 from datetime import date
-import sys, os
+from streamlit_autorefresh import st_autorefresh
+import sys
+import os
 
-# Configuration des chemins
+# 1. CONFIGURATION DES CHEMINS & IMPORTS LOCAUX
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from utils.auth_guard import require_login, get_active_project
 
-# 1. SÉCURITÉ & SIDEBAR (Doit être en premier)
+# 2. SÉCURITÉ (Doit être la toute première action)
 require_login()
 
-# 2. CONFIGURATION DE LA PAGE
+# 3. CONFIGURATION DE LA PAGE
 st.set_page_config(
-    page_title="PM Assistant",
+    page_title="Chatbot PM - Assistant IA",
     page_icon="🤖",
     layout="wide",
 )
 
 FASTAPI_URL = "http://localhost:8000/api/v1"
 
-# 3. RÉCUPÉRATION UNIQUE ET DYNAMIQUE DU PROJET
-# On utilise get_active_project() qui lit directement la sidebar
+# 4. RÉCUPÉRATION DU PROJET ACTIF
 current_project = get_active_project()
 
 if not current_project:
-    st.error("Aucun projet sélectionné.")
+    st.error("⚠️ Aucun projet sélectionné. Veuillez en choisir un dans la barre latérale.")
     st.stop()
 
 project_id = str(current_project['id'])
 project_name = current_project['name']
 
-# 4. LOGIQUE DE RESET (Si on change de projet dans la sidebar)
+# 🔄 AUTO-REFRESH (Toute 1 minute)
+# Crucial pour faire "surgir" les alertes du monitor.py sans action manuelle
+st_autorefresh(interval=60000, key="monitor_refresh")
+
+# 5. LOGIQUE DE RESET (Changement de projet)
 if "last_project_id" not in st.session_state:
     st.session_state["last_project_id"] = project_id
 
 if st.session_state["last_project_id"] != project_id:
-    # On vide le chat pour que l'IA change de contexte
     st.session_state.messages = [] 
     st.session_state["last_project_id"] = project_id
     st.rerun()
 
-# 5. TITRE UNIQUE
+# 6. TITRE ET ZONE D'ALERTES PROACTIVES
 st.title(f"🤖 PM Assistant — {project_name}")
 
-# 6. MÉTRIQUES DYNAMIQUES (Appel au Backend avec le BON ID)
+# --- BLOC DE MONITORING EN TEMPS RÉEL ---
 try:
-    r = requests.get(f"{FASTAPI_URL}/projects/{project_id}/metrics", timeout=5)
-    if r.status_code == 200:
-        m = r.json()
+    # Récupération des alertes depuis le store du Backend (monitor.py)
+    r_alerts = requests.get(f"{FASTAPI_URL}/alerts/{project_id}", timeout=5)
+    if r_alerts.status_code == 200:
+        alerts_data = r_alerts.json().get("alerts", [])
+        
+        for alert in alerts_data:
+            # Notification "Toast" (Petit popup en bas à droite)
+            st.toast(alert["message"], icon="🚨" if alert["level"] == "critique" else "⚠️")
+            
+            # Affichage persistant en haut de page
+            if alert["level"] == "critique":
+                st.error(f"🚨 **ALERTE CRITIQUE** : {alert['message']}")
+            else:
+                st.warning(f"⚠️ **ATTENTION** : {alert['message']}")
+
+    # Affichage des KPIs (Métriques)
+    r_metrics = requests.get(f"{FASTAPI_URL}/projects/{project_id}/metrics", timeout=5)
+    if r_metrics.status_code == 200:
+        m = r_metrics.json()
         c1, c2, c3, c4 = st.columns(4)
-        c1.metric("Avancement", f"{m['avancement']}%", f"+{m['delta']}%")
+        c1.metric("Avancement", f"{m['avancement']}%", f"+{m.get('delta', 0)}%")
         c2.metric("Tâches en retard", m['retard'], delta_color="inverse")
-        c3.metric("Risques", m['risques'])
-        c4.metric("Charge équipe", f"{m['charge']}%")
+        c3.metric("Risques Critiques", m['risques'])
+        c4.metric("Charge Équipe", f"{m['charge']}%")
 except Exception:
-    st.warning("Impossible de charger les métriques.")
+    st.info("📊 Synchronisation avec le service de monitoring...")
 
 st.divider()
 
-# --- Garde tes fonctions render_component et la suite du chat ici ---
-
-st.divider()
-
-# 7. FONCTIONS D'AFFICHAGE (Composants Graphiques)
+# 7. FONCTION DE RENDU DES COMPOSANTS (Graphiques Plotly)
 def render_component(display_type: str, data: dict):
     if display_type == "gantt":
-        versions = data.get("versions", [])
-        if versions:
+        issues = data.get("issues", [])
+        if issues:
             from datetime import timedelta
             rows = []
-            for v in versions:
-                due = v.get("due_date") or str(date.today())
-                start = str(date.fromisoformat(due) - timedelta(days=30))
-                rows.append({"Sprint": v["name"], "Début": start, "Fin": due, "Statut": v.get("status", "open")})
+            for i in issues:
+                due = i.get("due_date") or str(date.today())
+                start = i.get("start_date") or str(date.fromisoformat(due) - timedelta(days=7))
+                rows.append({
+                    "Tâche": i["subject"][:30], 
+                    "Début": start, 
+                    "Fin": due, 
+                    "Statut": i.get("status", {}).get("name", "Open")
+                })
             df = pd.DataFrame(rows)
-            fig = px.timeline(df, x_start="Début", x_end="Fin", y="Sprint", color="Statut", title="Planning des sprints")
+            fig = px.timeline(df, x_start="Début", x_end="Fin", y="Tâche", color="Statut", title="Planning détaillé")
+            fig.update_yaxes(autorange="reversed")
             st.plotly_chart(fig, use_container_width=True)
     
     elif display_type == "workload":
         time_by_user = data.get("time_by_user", {})
         if time_by_user:
             names = list(time_by_user.keys())
-            loads = [min((time_by_user[n] / 40) * 100, 100) for n in names]
+            loads = [round(min((hours / 40) * 100, 100), 1) for hours in time_by_user.values()]
             fig = go.Figure(go.Bar(x=loads, y=names, orientation="h", marker_color="#1D9E75"))
-            fig.update_layout(title="Charge de l'équipe (%)", xaxis=dict(range=[0, 100]))
+            fig.update_layout(title="Charge actuelle de l'équipe (%)", xaxis=dict(range=[0, 100]))
             st.plotly_chart(fig, use_container_width=True)
 
-# 8. GESTION DE L'HISTORIQUE DU CHAT
+# 8. HISTORIQUE DU CHAT
 if "messages" not in st.session_state or len(st.session_state.messages) == 0:
     st.session_state.messages = [{
         "role": "assistant",
-        "content": f"Bonjour ! Je suis votre assistant pour **{project_name}**.",
+        "content": f"Bonjour ! Je suis l'IA de gestion pour **{project_name}**. Que voulez-vous savoir ?",
         "display_type": "text",
         "data": {}
     }]
@@ -104,40 +126,51 @@ for msg in st.session_state.messages:
         if msg.get("display_type") and msg["display_type"] != "text":
             render_component(msg["display_type"], msg.get("data", {}))
 
-# 9. INPUT UTILISATEUR
-question = st.chat_input("Posez votre question sur le projet…")
+# 9. ZONE DE SAISIE ET APPEL BACKEND
+question = st.chat_input(f"Posez votre question sur {project_name}...")
 
 if question:
+    # Affichage immédiat du message utilisateur
     st.session_state.messages.append({"role": "user", "content": question})
     with st.chat_message("user"):
         st.markdown(question)
 
+    # Appel au moteur Multi-Agents
     with st.chat_message("assistant"):
-        with st.spinner("Analyse en cours..."):
+        with st.spinner("Analyse des données en cours..."):
             try:
                 resp = requests.post(
                     f"{FASTAPI_URL}/chat",
                     json={
                         "question": str(question),
                         "project_id": str(project_id),
+                        "project_name": str(project_name),
                         "user_id": str(st.session_state["user"]["id"]),
+                        "history": st.session_state.get("messages", [])[-5:]
                     },
-                    timeout=60
+                    timeout=90
                 )
+                
                 if resp.status_code == 200:
                     res = resp.json()
                     st.markdown(res["answer"])
-                    if res.get("display_type") != "text":
-                        render_component(res["display_type"], res.get("data", {}))
                     
+                    d_type = res.get("display_type", "text")
+                    d_data = res.get("data", {})
+                    
+                    if d_type != "text":
+                        render_component(d_type, d_data)
+                    
+                    # Sauvegarde
                     st.session_state.messages.append({
                         "role": "assistant", 
                         "content": res["answer"], 
-                        "display_type": res.get("display_type"), 
-                        "data": res.get("data")
+                        "display_type": d_type, 
+                        "data": d_data
                     })
                 else:
-                    st.error("Erreur serveur.")
+                    st.error(f"Erreur API ({resp.status_code})")
             except Exception as e:
-                st.error(f"Erreur : {e}")
+                st.error(f"Connexion impossible : {e}")
+    
     st.rerun()

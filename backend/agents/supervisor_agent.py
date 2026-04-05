@@ -7,6 +7,7 @@ from typing import Literal
 
 from langgraph.graph import StateGraph, END
 from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
+from typer.cli import state
 
 from agents.state import AgentState
 from agents.analyse_agent import analyse_node
@@ -19,26 +20,21 @@ SUPERVISOR_SYSTEM = """Tu es le Superviseur IA d'un assistant de gestion de proj
 NOM DU PROJET ACTIF : {project_name}
 ID DU PROJET ACTIF : {project_id}
 
-Analyse la question et retourne UN JSON avec "action" parmi :
+CONSIGNE CRITIQUE :
+- Ton unique but est de classer la requête. 
+- Si l'utilisateur parle de lui (santé, humeur, vie privée) ou de sujets hors-travail -> ACTION "hors_sujet".
+- INTERDICTION ABSOLUE de compatir ou de répondre au message de l'utilisateur (ex: ne dis pas "soignez-vous bien").
+- Tu dois être un robot froid qui ne connaît que la gestion de projet.
 
-1. "hors_sujet" → Uniquement si la question n'a AUCUN rapport avec le travail, Redmine ou le projet (ex: météo, cuisine , santé). 
-   Retourne STRICTEMENT : "Je suis un assistant spécialisé en gestion de projet. Posez-moi une question à propos du projet."
-
-2. "clarification" → La question concerne le projet mais est trop vague (ex: "fais quelque chose").
-   NOTE : Si l'utilisateur demande le NOM ou l'ID du projet, RÉPONDS DIRECTEMENT dans "message" avec l'action "clarification" (ex: "Nous travaillons sur le projet {project_name}").
-
-3. "analyse" → Demandes de données chiffrées : retards, risques, charge équipe, sprints, métriques.
-
-4. "rapporteur" → Demandes de synthèse : rapport de statut, résumé, préparation de réunion.
+PROJET ACTUEL : {project_name} (ID: {project_id})
 
 JSON attendu :
 {{
-  "action": "hors_sujet|clarification|analyse|rapporteur",
-  "intent": "hors_sujet|clarification|planning|risques|ressources|rapport|general",
-  "message": "Ta réponse si l'action est hors_sujet ou clarification, sinon vide",
-  "reasoning": "Pourquoi as-tu choisi cette action ?"
+  "action": "hors_sujet",
+  "intent": "hors_sujet",
+  "message": "Je suis un assistant spécialisé en gestion de projet. Je ne peux pas traiter les demandes personnelles ou médicales.",
+  "reasoning": "L'utilisateur parle de sa santé (hors-sujet)."
 }}"""
-
 def supervisor_node(state: AgentState) -> AgentState:
     llm = get_llm("supervisor")
 
@@ -76,44 +72,42 @@ def supervisor_node(state: AgentState) -> AgentState:
         intent  = "general"
         message = ""
 
-    # ── Hors sujet → réponse directe immédiate ────────────────
+   # ── 1. ON TESTE D'ABORD SI ON PEUT CLARIFIER (MÊME SI LE LLM DIT HORS_SUJET) ──
+    # On vérifie si des mots-clés du projet sont présents
+    keywords = ["membre", "projet", "tâche", "retard", "qui", "equipe", "équipe"]
+    is_project_related = any(word in last_question.lower() for word in keywords)
+
+    if action == "clarification" or (action == "hors_sujet" and is_project_related):
+        reply = message if message else (
+            f"Je suis prêt à vous aider sur le projet **{state.get('project_name')}**.\n"
+            "Pourriez-vous préciser votre demande ? (ex: 'Quels sont les membres de l'équipe ?')"
+        )
+        return {
+            **state,
+            "intent": "clarification",
+            "next_agent": "end",
+            "final_answer": reply,
+            "agent_result": reply,
+            "agent_status": "success",
+            "messages": state["messages"] + [AIMessage(content=reply)],
+        }
+
+    # ── 2. ENSUITE SEULEMENT, ON APPLIQUE LE HORS-SUJET STRICT ─────────────────
     if action == "hors_sujet":
-        reply = message if message else (
-            "Je suis votre assistant de gestion de projet. "
-            "Je ne peux pas répondre à des questions non liées au projet. "
-            "Posez-moi des questions sur le planning, les risques, "
-            "l'équipe ou l'avancement du projet."
-        )
+        # Réponse de sécurité pour les vrais hors-sujets (Madrid, météo, etc.)
+        reply = "Je suis votre assistant spécialisé en gestion de projet (Redmine). Je ne peux répondre qu'aux questions liées au projet, au planning ou à l'équipe."
+        
+        logger.warning(f"🛑 Accès hors-sujet bloqué définitivement : {last_question[:50]}...")
+        
         return {
             **state,
-            "intent":       "hors_sujet",
-            "next_agent":   "end",
+            "intent": "hors_sujet",
+            "next_agent": "end",
             "final_answer": reply,
             "agent_result": reply,
             "agent_status": "success",
-            "agent_error":  "",
-            "retry_count":  0,
-            "messages":     state["messages"] + [AIMessage(content=reply)],
+            "messages": state["messages"] + [AIMessage(content=reply)],
         }
-
-    # ── Clarification → demande précision ────────────────────
-    if action == "clarification":
-        reply = message if message else (
-            "Pourriez-vous préciser votre demande ?\n"
-
-        )
-        return {
-            **state,
-            "intent":       "clarification",
-            "next_agent":   "end",
-            "final_answer": reply,
-            "agent_result": reply,
-            "agent_status": "success",
-            "agent_error":  "",
-            "retry_count":  0,
-            "messages":     state["messages"] + [AIMessage(content=reply)],
-        }
-
     # ── Routing normal ────────────────────────────────────────
     next_agent = action if action in ("analyse", "rapporteur") else "rapporteur"
     return {

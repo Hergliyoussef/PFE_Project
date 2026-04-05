@@ -48,7 +48,6 @@ async def check_project(project_id: str):
             if due_date:
                 delay = (date.today() - date.fromisoformat(due_date)).days
             
-            # On génère l'alerte dès que delay >= 0 pour le test
             if delay >= 5:
                 alerts.append({
                     "type": "retard",
@@ -91,8 +90,6 @@ async def check_project(project_id: str):
 
     except Exception as e:
         logger.error(f"❌ [Monitor] Erreur sur projet {project_id} : {str(e)}")
-
-# backend/services/monitor.py
 
 async def check_all_projects():
     from services.redmine_client import redmine

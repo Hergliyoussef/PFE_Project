@@ -28,8 +28,8 @@ STRUCTURE DE RÉPONSE OBLIGATOIRE (Markdown) :
 📋 **PROCHAINES ÉTAPES & ACTIONS**
 (Ce qu'il faut faire maintenant)
 
----
-*Note : Sois diplomate mais direct. Si les données manquent, mentionne-le clairement.*
+💡 **PRÉDICTION IA** : 
+(Basé sur les retards actuels, estime si la deadline du prochain sprint est réaliste)
 """
 
 FALLBACK_MESSAGES = {

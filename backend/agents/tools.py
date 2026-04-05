@@ -1,220 +1,178 @@
 """
-Outils LangChain utilisés par les agents.
-Chaque outil appelle redmine_client et retourne un JSON string.
+Outils LangChain optimisés pour le PFE - Gestion de Projet IA.
+Ajoute l'analyse du chemin critique, de la vélocité et de la performance.
 """
 from langchain_core.tools import tool
 import json, sys, os
+from datetime import date, datetime, timedelta
+
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from services.redmine_client import redmine
 
+# --- OUTILS DE BASE EXISTANTS ---
 
 @tool
 def get_project_metrics(project_id: str) -> str:
-    """
-    Retourne les métriques globales d'un projet :
-    avancement, issues en retard, issues non démarrées,
-    taux de complétion, temps logué par membre.
-    """
+    """Retourne les métriques globales : avancement, retards, complétion."""
     try:
         data = redmine.compute_project_metrics(project_id)
         return json.dumps(data, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
-
 @tool
 def get_overdue_issues(project_id: str) -> str:
-    """
-    Retourne la liste des tâches ouvertes dont la date
-    d'échéance est dépassée, avec le nombre de jours de retard.
-    """
+    """Liste les tâches dont la date d'échéance est dépassée."""
     try:
         issues = redmine.get_overdue_issues(project_id)
-        result = []
-        for i in issues:
-            result.append({
-                "id":        i["id"],
-                "subject":   i["subject"],
-                "due_date":  i.get("due_date"),
-                "assignee":  i.get("assigned_to", {}).get("name", "Non assigné"),
-                "priority":  i.get("priority", {}).get("name", ""),
-                "progress":  i.get("done_ratio", 0),
-                "tracker":   i.get("tracker", {}).get("name", ""),
-            })
+        result = [{
+            "id": i["id"], "subject": i["subject"], "due_date": i.get("due_date"),
+            "assignee": i.get("assigned_to", {}).get("name", "Non assigné"),
+            "priority": i.get("priority", {}).get("name", ""),
+            "progress": i.get("done_ratio", 0)
+        } for i in issues]
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+# --- PRIORITÉ 1 : NOUVEAUX OUTILS STRATÉGIQUES ---
 
 @tool
-def get_not_started_issues(project_id: str) -> str:
+def get_critical_path(project_id: str) -> str:
     """
-    Retourne les tâches ouvertes à 0% d'avancement.
-    Utile pour détecter les tâches bloquées ou oubliées.
+    Identifie le chemin critique : les tâches bloquantes qui retardent le projet.
+    Analyse les relations 'precedes/follows' de Redmine.
     """
     try:
-        issues = redmine.get_not_started_issues(project_id)
-        result = []
+        issues = redmine.get_issues(project_id, status="open", include="relations")
+        # On filtre les tâches qui ont des relations bloquantes
+        critical_tasks = []
         for i in issues:
-            result.append({
-                "id":       i["id"],
-                "subject":  i["subject"],
-                "due_date": i.get("due_date"),
-                "assignee": i.get("assigned_to", {}).get("name", "Non assigné"),
-                "priority": i.get("priority", {}).get("name", ""),
-                "version":  i.get("fixed_version", {}).get("name", "Sans sprint"),
-            })
-        return json.dumps(result, ensure_ascii=False, indent=2)
+            relations = i.get("relations", [])
+            is_blocking = any(rel["relation_type"] == "precedes" for rel in relations)
+            if is_blocking and i.get("done_ratio", 0) < 100:
+                critical_tasks.append({
+                    "id": i["id"],
+                    "subject": i["subject"],
+                    "impact": "Bloque d'autres tâches",
+                    "due_date": i.get("due_date"),
+                    "assignee": i.get("assigned_to", {}).get("name", "?")
+                })
+        return json.dumps(critical_tasks, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
-
 @tool
-def get_team_workload(project_id: str) -> str:
+def get_velocity_trend(project_id: str) -> str:
     """
-    Analyse la charge de travail par membre de l'équipe :
-    heures loguées, nombre d'issues assignées, estimation surcharge.
-    """
-    try:
-        time_by_user  = redmine.get_time_by_user(project_id)
-        issues        = redmine.get_issues(project_id, status="open")
-        members       = redmine.get_project_members(project_id)
-
-        issues_by_user: dict[str, int] = {}
-        for i in issues:
-            name = i.get("assigned_to", {}).get("name", "Non assigné")
-            issues_by_user[name] = issues_by_user.get(name, 0) + 1
-
-        result = []
-        for m in members:
-            name  = m.get("user", {}).get("name", "?")
-            hours = time_by_user.get(name, 0)
-            nb    = issues_by_user.get(name, 0)
-            load  = min(round((hours / 40) * 100, 1), 100)
-            result.append({
-                "name":          name,
-                "hours_logged":  hours,
-                "open_issues":   nb,
-                "load_percent":  load,
-                "status": "surchargé" if load > 85 else "normal" if load > 50 else "disponible",
-            })
-        result.sort(key=lambda x: x["load_percent"], reverse=True)
-        return json.dumps(result, ensure_ascii=False, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@tool
-def get_project_news(project_id: str) -> str:
-    """
-    Retourne les dernières nouvelles et annonces du projet.
-    """
-    try:
-        news = redmine.get_news(project_id)
-        result = [{"title": n["title"], "summary": n.get("summary",""),
-                   "created_on": n.get("created_on","")} for n in news[:5]]
-        return json.dumps(result, ensure_ascii=False, indent=2)
-    except Exception as e:
-        return json.dumps({"error": str(e)})
-
-
-@tool
-def get_sprint_status(project_id: str) -> str:
-    """
-    Retourne l'état de chaque sprint/version du projet :
-    issues terminées, en cours, en retard par sprint.
+    Analyse la tendance de vélocité sur les 3 derniers sprints.
+    Prédit si le projet accélère ou ralentit.
     """
     try:
         versions = redmine.get_versions(project_id)
-        all_issues = redmine.get_issues(project_id, status="*")
-        from datetime import date
-        today = str(date.today())
+        # On prend les 3 dernières versions fermées ou en cours
+        history = []
+        for v in versions[-3:]:
+            issues = redmine.get_issues(project_id, status="*", fixed_version_id=v["id"])
+            total = len(issues)
+            done = len([i for i in issues if i.get("done_ratio") == 100])
+            velocity = (done / total * 100) if total > 0 else 0
+            history.append({"sprint": v["name"], "completion_rate": round(velocity, 1)})
+        
+        # Calcul de la tendance
+        trend = "stable"
+        if len(history) >= 2:
+            if history[-1]["completion_rate"] < history[-2]["completion_rate"]:
+                trend = "décroissante (Alerte)"
+            elif history[-1]["completion_rate"] > history[-2]["completion_rate"]:
+                trend = "croissante (Optimisation)"
+                
+        return json.dumps({"history": history, "trend": trend}, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@tool
+def get_member_performance(project_id: str) -> str:
+    """
+    Compare le temps estimé vs temps passé par membre.
+    Identifie les membres les plus efficaces ou ceux en difficulté.
+    """
+    try:
+        issues = redmine.get_issues(project_id, status="*")
+        performance = {}
+        for i in issues:
+            assignee = i.get("assigned_to", {}).get("name")
+            if not assignee: continue
+            
+            estimated = i.get("estimated_hours", 0) or 0
+            spent = i.get("spent_hours", 0) or 0
+            
+            if assignee not in performance:
+                performance[assignee] = {"total_est": 0, "total_spent": 0, "tasks": 0}
+            
+            performance[assignee]["total_est"] += estimated
+            performance[assignee]["total_spent"] += spent
+            performance[assignee]["tasks"] += 1
 
         result = []
-        for v in versions:
-            vid   = v["id"]
-            vname = v["name"]
-            v_issues = [i for i in all_issues
-                        if i.get("fixed_version", {}).get("id") == vid]
-            done    = [i for i in v_issues if i.get("done_ratio", 0) == 100]
-            overdue = [i for i in v_issues
-                       if i.get("due_date","") < today
-                       and i.get("done_ratio", 0) < 100]
-            avg = (sum(i.get("done_ratio",0) for i in v_issues) / len(v_issues)
-                   if v_issues else 0)
+        for name, stats in performance.items():
+            ratio = round(stats["total_est"] / stats["total_spent"], 2) if stats["total_spent"] > 0 else 1.0
             result.append({
-                "sprint":        vname,
-                "status":        v.get("status","open"),
-                "due_date":      v.get("due_date",""),
-                "total_issues":  len(v_issues),
-                "done":          len(done),
-                "overdue":       len(overdue),
-                "avg_progress":  round(avg, 1),
+                "name": name,
+                "efficiency_ratio": ratio,
+                "tasks_count": stats["tasks"],
+                "status": "Haute performance" if ratio > 1.1 else "Sous-estimé" if ratio < 0.8 else "Nominal"
             })
         return json.dumps(result, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+# --- PRIORITÉ 2 : CLASSIFY_RISK AMÉLIORÉ ---
 
 @tool
 def classify_risk(project_id: str) -> str:
     """
-    Calcule et classifie le niveau de risque global du projet
-    (faible / moyen / élevé) avec un score entre 0 et 1.
+    Calcule le risque avec les nouveaux critères PFE :
+    Retards + Bugs + Vélocité + Chemin Critique.
     """
     try:
         metrics = redmine.compute_project_metrics(project_id)
-        issues  = redmine.get_issues(project_id, status="open")
-
-        bugs_urgent = sum(
-            1 for i in issues
-            if i.get("tracker", {}).get("name","").lower() in ("anomalie","bug")
-            and i.get("priority", {}).get("id", 0) >= 3
-        )
-
-        total    = max(metrics["total_issues"], 1)
-        overdue  = metrics["overdue_issues"]
-        progress = metrics["avg_progress"]
-
-        score = (
-            (overdue / total)         * 0.40 +
-            (bugs_urgent / 10)        * 0.30 +
-            ((100 - progress) / 100)  * 0.30
-        )
+        
+        # Récupération des données pour les nouveaux critères
+        path_data = json.loads(get_critical_path(project_id))
+        velocity_data = json.loads(get_velocity_trend(project_id))
+        
+        # Calcul du score (Base 0.0 à 1.0)
+        overdue_ratio = metrics["overdue_issues"] / max(metrics["total_issues"], 1)
+        critical_penalty = 0.2 if len(path_data) > 0 else 0
+        velocity_penalty = 0.15 if velocity_data.get("trend") == "décroissante (Alerte)" else 0
+        
+        score = (overdue_ratio * 0.4) + (critical_penalty) + (velocity_penalty) + ((100 - metrics["avg_progress"])/100 * 0.25)
         score = round(min(score, 1.0), 2)
-
-        level = "faible" if score < 0.35 else "moyen" if score < 0.65 else "élevé"
-
+        
+        level = "faible" if score < 0.35 else "moyen" if score < 0.70 else "élevé"
+        
         return json.dumps({
-            "risk_level":    level,
-            "risk_score":    score,
-            "overdue_issues":  overdue,
-            "critical_bugs":   bugs_urgent,
-            "avg_progress":    progress,
-            "details": {
-                "retards_weight":  round((overdue / total) * 0.40, 3),
-                "bugs_weight":     round((bugs_urgent / 10) * 0.30, 3),
-                "progress_weight": round(((100 - progress) / 100) * 0.30, 3),
+            "risk_level": level,
+            "risk_score": score,
+            "factors": {
+                "critical_path_blocked": len(path_data) > 0,
+                "velocity_trend": velocity_data.get("trend"),
+                "overdue_count": metrics["overdue_issues"]
             }
         }, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+# --- LISTES D'OUTILS MISES À JOUR ---
 
-# Liste de tous les outils disponibles
 ALL_TOOLS = [
-    get_project_metrics,
-    get_overdue_issues,
-    get_not_started_issues,
-    get_team_workload,
-    get_project_news,
-    get_sprint_status,
-    classify_risk,
+    get_project_metrics, get_overdue_issues, get_critical_path,
+    get_velocity_trend, get_member_performance, classify_risk
 ]
 
-ANALYSE_TOOLS    = [get_project_metrics, get_overdue_issues,
-                    get_not_started_issues, get_team_workload,
-                    get_sprint_status, classify_risk]
+ANALYSE_TOOLS = ALL_TOOLS
+DECISION_TOOLS = [get_critical_path, get_velocity_trend, classify_risk, get_member_performance]
 
-RAPPORTEUR_TOOLS = [get_project_metrics, get_sprint_status,
-                    get_project_news, get_overdue_issues] 
+# Liste pour l'agent Rapporteur (Synthèse et métriques)
+RAPPORTEUR_TOOLS = [get_project_metrics, get_overdue_issues, get_velocity_trend, classify_risk]

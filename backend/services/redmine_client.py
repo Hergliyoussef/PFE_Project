@@ -85,6 +85,19 @@ class RedmineClient:
     def get_news(self, project_id: str) -> list[dict]:
         data = self._get(f"/projects/{project_id}/news.json")
         return data.get("news", [])
+    
+    def get_project_members(self, project_id: str) -> list[dict]:
+        """Récupère les membres du projet."""
+        data = self._get(f"/projects/{project_id}/memberships.json", {"limit": 100})
+        memberships = data.get("memberships", [])
+        # Extraire les informations clés (id, name, roles)
+        return [
+            {
+                "id": m.get("id"),
+                "user": m.get("user", {}),
+                "roles": m.get("roles", []),
+            } for m in memberships
+        ]
 
     # --- MÉTRIQUES CALCULÉES (LE CŒUR DE L'IA) ---
     def compute_project_metrics(self, project_id: str) -> dict:
@@ -105,6 +118,12 @@ class RedmineClient:
             if any(rel["relation_type"] == "precedes" for rel in i.get("relations", []))
             and i.get("done_ratio", 0) < 100
         ]
+        
+        # Détection des problèmes critiques (priorité haute + non terminé)
+        critical_issues = [
+            i for i in all_issues
+            if i.get("priority", {}).get("id", 0) >= 4 and i.get("done_ratio", 0) < 100
+        ]
 
         total = len(all_issues) or 1
         avg_done = sum(i.get("done_ratio", 0) for i in open_issues) / len(open_issues) if open_issues else 0
@@ -118,6 +137,7 @@ class RedmineClient:
             "overdue_issues": len(overdue),
             "not_started": len(not_started),
             "blocking_issues_count": len(blocking_issues),
+            "critical_issues": len(critical_issues),
             "active_versions": len([v for v in versions if v.get("status") == "open"]),
             "avg_progress": round(avg_done, 1),
             "completion_rate": round(len(done_issues) / total * 100, 1),

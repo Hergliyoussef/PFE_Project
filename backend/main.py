@@ -1,75 +1,47 @@
-import sys
-import os
-from pathlib import Path
-
-# --- FIX DES IMPORTS (CRUCIAL POUR TON PFE) ---
-# On ajoute le dossier 'backend' au PATH de recherche Python
-BASE_DIR = Path(__file__).resolve().parent
-sys.path.append(str(BASE_DIR))
-
+"""
+main.py sécurisé — backend/main.py
+"""
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 import logging
 
-# On importe le router après avoir fixé le PATH
 from api.chat import router as chat_router
+from api.auth import router as auth_router
 
 logging.basicConfig(level=logging.INFO)
-logger = logging.getLogger("main")
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    """Gère le cycle de vie du monitoring proactif."""
     from services.monitor import start_monitor, stop_monitor, check_all_projects
-
-    logger.info("🚀 Démarrage du monitoring proactif...")
-    try:
-        # On lance le scheduler APScheduler
-        start_monitor()
-        # Première vérification immédiate des 21 alertes de ShopFlow
-        await check_all_projects()
-        logger.info("✅ Monitoring initialisé et première vérification terminée.")
-    except Exception as e:
-        logger.error(f"❌ Erreur au démarrage du monitoring : {e}")
-
-    yield  # L'application FastAPI tourne ici
-
-    # Arrêt propre du scheduler à la fermeture du serveur
+    logger.info("Démarrage du monitoring proactif...")
+    start_monitor()
+    await check_all_projects()
+    yield
     stop_monitor()
-    logger.info("🛑 Monitoring arrêté proprement.")
+
 
 app = FastAPI(
     title       = "PM Assistant API",
-    description = "Chatbot IA Multi-Agents pour Redmine — Projet PFE Wassim/Youssef",
+    description = "Chatbot IA pour chefs de projet — Redmine",
     version     = "1.0.0",
     lifespan    = lifespan,
 )
 
-# Configuration CORS pour autoriser Streamlit (port 8501)
 app.add_middleware(
     CORSMiddleware,
     allow_origins  = ["http://localhost:8501"],
-    allow_credentials = True,
     allow_methods  = ["*"],
     allow_headers  = ["*"],
 )
 
-# Inclusion des routes de Chat
-app.include_router(chat_router, prefix="/api/v1")
+# ── Routers ───────────────────────────────────────────────────
+app.include_router(auth_router, prefix="/api/v1")     # /api/v1/auth/login
+app.include_router(chat_router, prefix="/api/v1")     # /api/v1/chat
+
 
 @app.get("/health")
 def health():
-    """Route de vérification pour le frontend."""
-    return {
-        "status": "ok", 
-        "monitoring": "actif",
-        "project": "PM Assistant"
-    }
-
-@app.get("/api/v1/alerts/{project_id}")
-def get_alerts_endpoint(project_id: str):
-    from services.monitor import get_alerts
-    # Enlève clear_alerts pour le test, pour être sûr que l'alerte reste dispo
-    alerts = get_alerts(project_id)
-    return {"project_id": project_id, "alerts": alerts}
+    return {"status": "ok", "monitoring": "actif"}

@@ -14,9 +14,9 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
 
     # ── Modèles par agent ─────────────────────────────────────
-    llm_supervisor:  str = "liquid/lfm-2.5-1.2b-thinking:free"
+    llm_supervisor:  str = "llama-3.3-70b-versatile"
     llm_analyse:     str = "llama-3.3-70b-versatile"
-    llm_rapporteur:  str = "arcee-ai/trinity-mini:free"
+    llm_rapporteur:  str = "liquid/lfm-2.5-1.2b-thinking:free"
     llm_fallback:    str = "openai/gpt-oss-120b:free"
 
     # ── Redmine ───────────────────────────────────────────────

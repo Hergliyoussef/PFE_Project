@@ -53,7 +53,12 @@ st.title(f"🤖 PM Assistant — {project_name}")
 # --- BLOC DE MONITORING EN TEMPS RÉEL ---
 try:
     # Récupération des alertes depuis le store du Backend (monitor.py)
-    r_alerts = requests.get(f"{FASTAPI_URL}/alerts/{project_id}", timeout=5)
+    from utils.api_client import _get_headers
+    r_alerts = requests.get(
+        f"{FASTAPI_URL}/alerts/{project_id}",
+        headers=_get_headers(),
+        timeout=5
+    )
     if r_alerts.status_code == 200:
         alerts_data = r_alerts.json().get("alerts", [])
         
@@ -68,7 +73,11 @@ try:
                 st.warning(f"⚠️ **ATTENTION** : {alert['message']}")
 
     # Affichage des KPIs (Métriques)
-    r_metrics = requests.get(f"{FASTAPI_URL}/projects/{project_id}/metrics", timeout=5)
+    r_metrics = requests.get(
+        f"{FASTAPI_URL}/projects/{project_id}/metrics",
+        headers=_get_headers(),
+        timeout=5
+    )
     if r_metrics.status_code == 200:
         m = r_metrics.json()
         c1, c2, c3, c4 = st.columns(4)
@@ -139,20 +148,19 @@ if question:
     with st.chat_message("assistant"):
         with st.spinner("Analyse des données en cours..."):
             try:
-                resp = requests.post(
-                    f"{FASTAPI_URL}/chat",
-                    json={
-                        "question": str(question),
-                        "project_id": str(project_id),
-                        "project_name": str(project_name),
-                        "user_id": str(st.session_state["user"]["id"]),
-                        "history": st.session_state.get("messages", [])[-5:]
-                    },
-                    timeout=90
+                from utils.api_client import _get_headers, ask_agent
+                
+                # Utiliser la fonction api_client pour avoir les headers JWT
+                resp_json = ask_agent(
+                    question=question,
+                    project_id=project_id,
+                    project_name=project_name,
+                    user_id=str(st.session_state["user"]["id"]),
+                    history=st.session_state.get("messages", [])[-5:]
                 )
                 
-                if resp.status_code == 200:
-                    res = resp.json()
+                if resp_json.get("answer"):
+                    res = resp_json
                     st.markdown(res["answer"])
                     
                     d_type = res.get("display_type", "text")
@@ -169,7 +177,7 @@ if question:
                         "data": d_data
                     })
                 else:
-                    st.error(f"Erreur API ({resp.status_code})")
+                    st.error("❌ Pas de réponse du serveur")
             except Exception as e:
                 st.error(f"Connexion impossible : {e}")
     

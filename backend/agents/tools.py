@@ -44,7 +44,7 @@ def get_critical_path(project_id: str) -> str:
     Analyse les relations 'precedes/follows' de Redmine.
     """
     try:
-        issues = redmine.get_issues(project_id, status="open", include="relations")
+        issues = redmine.get_issues(project_id, status="open")
         # On filtre les tâches qui ont des relations bloquantes
         critical_tasks = []
         for i in issues:
@@ -73,7 +73,10 @@ def get_velocity_trend(project_id: str) -> str:
         # On prend les 3 dernières versions fermées ou en cours
         history = []
         for v in versions[-3:]:
-            issues = redmine.get_issues(project_id, status="*", fixed_version_id=v["id"])
+            # Récupérer les issues de cette version avec un filtre approprié
+            all_version_issues = redmine.get_issues(project_id, status="*")
+            # Filtrer manuellement par version_id
+            issues = [i for i in all_version_issues if i.get("fixed_version", {}).get("id") == v["id"]]
             total = len(issues)
             done = len([i for i in issues if i.get("done_ratio") == 100])
             velocity = (done / total * 100) if total > 0 else 0

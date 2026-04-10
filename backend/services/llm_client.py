@@ -63,8 +63,8 @@ def get_llm(agent: str = "supervisor"):
             return _groq(settings.llm_analyse)
 
         elif agent == "supervisor":
-            logger.info(f"[LLM] Superviseur → OpenRouter '{settings.llm_supervisor}'")
-            return _openrouter(settings.llm_supervisor)
+            logger.info(f"[LLM] Superviseur → Groq '{settings.llm_supervisor}'")
+            return _groq(settings.llm_supervisor)
 
         elif agent == "rapporteur":
             logger.info(f"[LLM] Rapporteur → OpenRouter '{settings.llm_rapporteur}'")

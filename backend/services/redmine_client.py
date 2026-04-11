@@ -126,7 +126,8 @@ class RedmineClient:
         ]
 
         total = len(all_issues) or 1
-        avg_done = sum(i.get("done_ratio", 0) for i in open_issues) / len(open_issues) if open_issues else 0
+        # Calcul de la progression sur TOUS les problèmes (pas seulement les ouverts)
+        avg_done = sum(i.get("done_ratio", 0) for i in all_issues) / total
 
         # Retourne un dictionnaire propre et structuré
         return {
@@ -141,6 +142,7 @@ class RedmineClient:
             "active_versions": len([v for v in versions if v.get("status") == "open"]),
             "avg_progress": round(avg_done, 1),
             "completion_rate": round(len(done_issues) / total * 100, 1),
+            "max_workload": round(max([min((h / 40) * 100, 100) for h in self.get_time_by_user(project_id).values()], default=0), 1),
             "time_by_user": self.get_time_by_user(project_id),
             "overdue_list": [
                 {

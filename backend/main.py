@@ -1,5 +1,5 @@
 """
-main.py sécurisé — backend/main.py
+main.py— backend/main.py
 """
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -15,14 +15,18 @@ logger = logging.getLogger(__name__)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    from db.session import engine
+    from db.models import Base
     from services.monitor import start_monitor, stop_monitor, check_all_projects
+    
+    logger.info("Initialisation de la base de données...")
+    Base.metadata.create_all(bind=engine) # Crée les tables Postgres si elles n'existent pas
+    
     logger.info("Démarrage du monitoring proactif...")
     start_monitor()
     await check_all_projects()
     yield
     stop_monitor()
-
-
 app = FastAPI(
     title       = "PM Assistant API",
     description = "Chatbot IA pour chefs de projet — Redmine",
@@ -32,9 +36,10 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins  = ["http://localhost:8501"],
-    allow_methods  = ["*"],
-    allow_headers  = ["*"],
+    allow_origins      = ["http://localhost:8501"],
+    allow_methods      = ["*"],
+    allow_headers      = ["*"],
+    allow_credentials  = True,   # BUG 11 — nécessaire pour le header Authorization: Bearer
 )
 
 # ── Routers ───────────────────────────────────────────────────

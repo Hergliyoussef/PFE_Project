@@ -66,6 +66,7 @@ def rapporteur_node(state: AgentState) -> AgentState:
 
     attempt = 0
     max_retries = 2
+    last_error = None  # BUG 2 — variable dédiée pour éviter NameError
     
     while attempt < max_retries:
         attempt += 1
@@ -96,6 +97,7 @@ def rapporteur_node(state: AgentState) -> AgentState:
             }
 
         except Exception as e:
+            last_error = e  # BUG 2 — capturer l'erreur ici
             logger.error(f"❌ Erreur Agent Rapporteur (Tentative {attempt}/{max_retries}) : {e}")
             if attempt < max_retries:
                 import time
@@ -111,6 +113,6 @@ def rapporteur_node(state: AgentState) -> AgentState:
         **state,
         "final_answer": fallback_txt,
         "agent_status": "error",
-        "agent_error": str(e) if 'e' in locals() else "Timeout",
+        "agent_error": str(last_error) if last_error else "Timeout",  # BUG 2 — was: str(e) if 'e' in locals()
         "messages": state["messages"] + [AIMessage(content=fallback_txt)]
     }

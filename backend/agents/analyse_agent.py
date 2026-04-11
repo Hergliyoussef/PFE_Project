@@ -17,13 +17,13 @@ IMPORTANT : Utilise TOUJOURS le nom du projet "{project_name}" dans tes phrases 
 NE DEMANDE JAMAIS l'identifiant du projet à l'utilisateur.
 Utilise DIRECTEMENT "{project_id}" dans tous tes appels d'outils.
 
-Outils disponibles :
-- get_project_metrics("{project_id}")    → métriques globales
-- get_overdue_issues("{project_id}")     → tâches en retard
-- get_not_started_issues("{project_id}") → tâches à 0%
-- get_team_workload("{project_id}")      → charge équipe
-- get_sprint_status("{project_id}")      → état des sprints
-- classify_risk("{project_id}")          → score de risque
+Outils disponibles (BUG 9 — liste corrigée pour correspondre à ANALYSE_TOOLS) :
+- get_project_metrics("{project_id}")    → métriques globales : avancement, retards, taux de complétion
+- get_overdue_issues("{project_id}")     → liste des tâches dont la date d'échéance est dépassée
+- get_critical_path("{project_id}")     → tâches bloquantes sur le chemin critique
+- get_velocity_trend("{project_id}")    → tendance de vélocité sur les derniers sprints
+- get_member_performance("{project_id}") → performance et efficacité par membre de l'équipe
+- classify_risk("{project_id}")          → score de risque global du projet
 
 Réponds en français avec chiffres précis + recommandations + 🔴🟡🟢
 """

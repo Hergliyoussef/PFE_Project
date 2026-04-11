@@ -18,6 +18,7 @@ from services.auth import (
     create_refresh_token,
     verify_token,
     get_current_user,
+    require_authorized_role,   # dépendance de protection des routes
 )
 
 logger = logging.getLogger(__name__)
@@ -51,21 +52,32 @@ async def login(req: LoginRequest):
     2. Génère access_token (1h) + refresh_token (7j)
     3. Retourne les tokens + infos utilisateur
     """
-    # Vérification Redmine
+    # Vérification Redmine (credentials + rôle)
     user = await authenticate_with_redmine(req.login, req.password)
 
-    if not user:
+    if user is None:
         raise HTTPException(
             status_code = status.HTTP_401_UNAUTHORIZED,
             detail      = "Identifiant ou mot de passe incorrect.",
             headers     = {"WWW-Authenticate": "Bearer"},
         )
 
+    # L'utilisateur existe mais son rôle n'est pas autorisé
+    if user.get("role_denied"):
+        roles_str = ", ".join(user.get("roles", [])) or "aucun rôle assigné"
+        raise HTTPException(
+            status_code = status.HTTP_403_FORBIDDEN,
+            detail      = (
+                f"Accès refusé. Cette application est réservée aux Chefs de Projet et CEO. "
+                f"Vos rôles actuels : {roles_str}."
+            ),
+        )
+
     # Génération des tokens
     access_token  = create_access_token(user)
     refresh_token = create_refresh_token(user)
 
-    logger.info(f"[Login] Connexion réussie : {req.login}")
+    logger.info(f"[Login] Connexion réussie : {req.login} — rôles : {user.get('roles', [])}")
 
     return TokenResponse(
         access_token  = access_token,
@@ -78,6 +90,8 @@ async def login(req: LoginRequest):
             "email":     user["email"],
             "is_admin":  user["is_admin"],
             "api_key":   user["api_key"],
+            "roles":     user.get("roles", []),  
+            "authorized_projects": user.get("authorized_projects", []), # ← Nouveau
         },
     )
 
@@ -93,13 +107,14 @@ async def refresh_token(req: RefreshRequest):
     """
     payload = verify_token(req.refresh_token, token_type="refresh")
 
-    # Reconstruire les données utilisateur depuis le token
+    # Reconstruire les données utilisateur depuis le token (avec les rôles)
     user_data = {
         "id":       payload.get("user_id"),
         "login":    payload.get("sub"),
         "email":    "",
         "is_admin": False,
         "api_key":  "",
+        "roles":    payload.get("roles", []),  # rôles conservés depuis le refresh token
     }
 
     new_access  = create_access_token(user_data)

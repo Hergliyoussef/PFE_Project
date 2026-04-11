@@ -1,3 +1,4 @@
+# frontend/app.py
 import streamlit as st
 
 if "authenticated" not in st.session_state or not st.session_state["authenticated"]:

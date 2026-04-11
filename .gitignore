@@ -11,6 +11,21 @@ env/
 __pycache__/
 *.py[cod]
 
+# Frontend (si tu as du Node.js/React dans le même dossier)
+node_modules/
+build/
+dist/
+
+# Bases de données locales (Fichiers de données)
+*.sqlite
+*.sqlite3
+*.db
+*.dump
+
 # Fichiers système
 .DS_Store
 Thumbs.db
+# Fichiers binaires et exécutables
+*.exe
+*.dll
+*.so

@@ -1,1 +1,75 @@
- 
+version: '3.8'
+
+services:
+  # --- 1. Base de données pour l'Assistant (PostgreSQL) ---
+  db:
+    image: postgres:16-alpine
+    container_name: pm_postgres
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: pfe_password_2026
+      POSTGRES_DB: pm_chatbot
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - pfe-network
+    restart: always
+
+  # --- 2. Cache & Sessions (Redis) ---
+  redis:
+    image: redis:7-alpine
+    container_name: pm_redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    networks:
+      - pfe-network
+    restart: always
+
+  # --- 3. Base de données Redmine (MySQL) ---
+  redmine-mysql:
+    image: mysql:5.7
+    container_name: redmine-mysql
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpass
+      MYSQL_DATABASE: redmine_db
+      MYSQL_USER: redmine
+      MYSQL_PASSWORD: redminepass
+      MYSQL_ALLOW_EMPTY_PASSWORD: "yes"
+    volumes:
+      - mysql_data_ancien:/var/lib/mysql
+    networks:
+      - pfe-network
+    restart: always
+
+  # --- 4. Serveur Redmine ---
+  redmine:
+    image: redmine:latest
+    container_name: redmine
+    ports:
+      - "3000:3000"
+    environment:
+      REDMINE_DB_MYSQL: redmine-mysql
+      REDMINE_DB_DATABASE: redmine_db
+      REDMINE_DB_USERNAME: redmine
+      REDMINE_DB_PASSWORD: redminepass
+    depends_on:
+      - redmine-mysql
+    networks:
+      - pfe-network
+    restart: always
+
+# --- DÉFINITIONS GLOBALES ---
+networks:
+  pfe-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  redis_data:
+  mysql_data_ancien:
+    external: true
+    name: da1ffb06daa42b29b172c161576e66fe98fb83a0b5c1a058093090498dc1ba18

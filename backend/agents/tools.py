@@ -142,8 +142,9 @@ def classify_risk(project_id: str) -> str:
         metrics = redmine.compute_project_metrics(project_id)
         
         # Récupération des données pour les nouveaux critères
-        path_data = json.loads(get_critical_path(project_id))
-        velocity_data = json.loads(get_velocity_trend(project_id))
+        # BUG 7 — utiliser .invoke() pour appeler correctement les objets @tool LangChain
+        path_data = json.loads(get_critical_path.invoke({"project_id": project_id}))
+        velocity_data = json.loads(get_velocity_trend.invoke({"project_id": project_id}))
         
         # Calcul du score (Base 0.0 à 1.0)
         overdue_ratio = metrics["overdue_issues"] / max(metrics["total_issues"], 1)

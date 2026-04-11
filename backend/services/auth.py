@@ -33,37 +33,103 @@ bearer_scheme = HTTPBearer()
 # ── Contexte hachage mot de passe (optionnel) ─────────────────
 pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 
+# ── Contrôle d'accès basé sur les rôles ───────────────────────
+# Rôles Redmine autorisés à accéder à l'application
+# ✅ Manager, CEO  →  accès accordé
+# ❌ Développeur, Rapporteur  →  accès refusé (HTTP 403)
+AUTHORIZED_ROLES = {
+    "Manager",
+    "CEO",
+}
+
+ROLE_PRIORITY = {
+    "CEO": 1,
+    "Manager": 2,
+    "D développeur": 10,  # Gestion de l'encodage Redmine probable
+    "Développeur": 10,
+    "Developer": 10,
+    "Rapporteur": 20,
+}
+
 
 # ──────────────────────────────────────────────────────────────
 # AUTHENTIFICATION VIA REDMINE
 # ──────────────────────────────────────────────────────────────
 async def authenticate_with_redmine(login: str, password: str) -> Optional[dict]:
     """
-    Vérifie les credentials directement via l'API Redmine.
-    Retourne les infos utilisateur si succès, None sinon.
+    Vérifie les credentials Redmine ET les rôles de l'utilisateur.
+
+    Retourne :
+        dict          — credentials valides ET rôle autorisé
+        {"role_denied": True, ...} — credentials valides MAIS rôle non autorisé
+        None          — mauvais identifiants ou erreur réseau
     """
     try:
         async with httpx.AsyncClient(timeout=8) as client:
             response = await client.get(
                 f"{settings.redmine_url}/users/current.json",
+                params={"include": "memberships"},   # ← récupère les rôles Redmine
                 auth=(login, password),
             )
 
-        if response.status_code == 200:
-            user = response.json().get("user", {})
-            logger.info(f"[Auth] Connexion réussie : {login}")
-            return {
-                "id":        user.get("id"),
-                "login":     user.get("login"),
-                "firstname": user.get("firstname", ""),
-                "lastname":  user.get("lastname", ""),
-                "email":     user.get("mail", ""),
-                "is_admin":  user.get("admin", False),
-                "api_key":   user.get("api_key", ""),
-            }
+        if response.status_code != 200:
+            logger.warning(f"[Auth] Échec connexion : {login} (HTTP {response.status_code})")
+            return None
 
-        logger.warning(f"[Auth] Échec connexion : {login} (HTTP {response.status_code})")
-        return None
+        user = response.json().get("user", {})
+        is_admin = user.get("admin", False)
+
+        # ── Extraction des rôles et projets autorisés ──────────────────────
+        memberships = user.get("memberships", [])
+        user_roles: set[str] = set()
+        authorized_projects = []
+        
+        for membership in memberships:
+            proj = membership.get("project", {})
+            m_roles = [r.get("name", "") for r in membership.get("roles", [])]
+            
+            # On stocke tous les rôles pour le JWT
+            for r_name in m_roles:
+                user_roles.add(r_name)
+            
+            # Filtre : Est-ce que l'utilisateur est PM/CEO sur CE projet ?
+            is_authorized_on_proj = any(r in AUTHORIZED_ROLES for r in m_roles)
+            if is_authorized_on_proj or is_admin:
+                authorized_projects.append({
+                    "id": proj.get("id"),
+                    "name": proj.get("name"),
+                    "identifier": proj.get("identifier")
+                })
+
+        # ── Contrôle d'accès ────────────────────────────────────────
+        has_authorized_role = is_admin or len(authorized_projects) > 0
+
+        if not has_authorized_role:
+            logger.warning(
+                f"[Auth] Accès refusé pour {login} — "
+                f"aucun rôle autorisé (Manager/CEO) sur les projets détectés."
+            )
+            return {"role_denied": True, "roles": sorted(user_roles)}
+
+        # ── Priorisation du rôle (pour l'affichage) ─────────────────
+        sorted_roles = sorted(
+            list(user_roles),
+            key=lambda r: ROLE_PRIORITY.get(r, 99)
+        )
+
+        logger.info(f"[Auth] Connexion réussie : {login} — {len(authorized_projects)} projets autorisés")
+        
+        return {
+            "id":        user.get("id"),
+            "login":     user.get("login"),
+            "firstname": user.get("firstname", ""),
+            "lastname":  user.get("lastname", ""),
+            "email":     user.get("mail", ""),
+            "is_admin":  is_admin,
+            "api_key":   user.get("api_key", ""),
+            "roles":     sorted_roles,   # Le premier est le plus prioritaire
+            "authorized_projects": authorized_projects,
+        }
 
     except Exception as e:
         logger.error(f"[Auth] Erreur Redmine : {e}")
@@ -76,7 +142,7 @@ async def authenticate_with_redmine(login: str, password: str) -> Optional[dict]
 def create_access_token(user_data: dict) -> str:
     """
     Génère un JWT access token signé avec SECRET_KEY.
-    Expire dans ACCESS_TOKEN_EXPIRE_MINUTES.
+    Inclut les rôles pour le contrôle d'accès backend.
     """
     payload = {
         "sub":       user_data["login"],
@@ -84,6 +150,7 @@ def create_access_token(user_data: dict) -> str:
         "email":     user_data["email"],
         "is_admin":  user_data["is_admin"],
         "api_key":   user_data["api_key"],
+        "roles":     user_data.get("roles", []),   # ← rôles inclus dans le token
         "type":      "access",
         "exp":       datetime.utcnow() + timedelta(minutes=ACCESS_TOKEN_EXPIRE_MINUTES),
         "iat":       datetime.utcnow(),
@@ -95,16 +162,16 @@ def create_access_token(user_data: dict) -> str:
 
 def create_refresh_token(user_data: dict) -> str:
     """
-    Génère un JWT refresh token.
-    Expire dans REFRESH_TOKEN_EXPIRE_DAYS.
-    Utilisé pour renouveler l'access token sans re-login.
+    Génère un JWT refresh token (7 jours).
+    Inclut les rôles pour les conserver lors du renouvellement.
     """
     payload = {
-        "sub":     user_data["login"],
-        "user_id": user_data["id"],
-        "type":    "refresh",
-        "exp":     datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
-        "iat":     datetime.utcnow(),
+        "sub":      user_data["login"],
+        "user_id":  user_data["id"],
+        "roles":    user_data.get("roles", []),    # ← conservés lors du refresh
+        "type":     "refresh",
+        "exp":      datetime.utcnow() + timedelta(days=REFRESH_TOKEN_EXPIRE_DAYS),
+        "iat":      datetime.utcnow(),
     }
     return jwt.encode(payload, settings.secret_key, algorithm=ALGORITHM)
 
@@ -175,5 +242,24 @@ async def get_current_admin(
         raise HTTPException(
             status_code = status.HTTP_403_FORBIDDEN,
             detail      = "Accès réservé aux administrateurs.",
+        )
+    return current_user
+
+
+async def require_authorized_role(
+    current_user: dict = Depends(get_current_user),
+) -> dict:
+    """
+    Dépendance de protection des routes sensibles.
+    Accepte uniquement : Chefs de Projet, CEO et admins Redmine.
+    Constitue une deuxième couche de sécurité après le login.
+    """
+    if current_user.get("is_admin"):
+        return current_user
+    user_roles = set(current_user.get("roles", []))
+    if not user_roles & AUTHORIZED_ROLES:
+        raise HTTPException(
+            status_code = status.HTTP_403_FORBIDDEN,
+            detail      = "Accès réservé aux Chefs de Projet et CEO.",
         )
     return current_user

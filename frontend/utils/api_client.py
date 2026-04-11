@@ -8,8 +8,8 @@ import streamlit as st
 
 logger = logging.getLogger(__name__)
 FASTAPI_URL     = "http://localhost:8000/api/v1"
-TIMEOUT_CHAT    = 60
-TIMEOUT_METRICS = 10
+TIMEOUT_CHAT    = 90
+TIMEOUT_METRICS = 20
 TIMEOUT_ALERTS  = 5
 
 
@@ -27,17 +27,24 @@ def _handle_401():
     st.warning("⚠️ Session expirée. Reconnectez-vous.")
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    st.switch_page("login.py")
+    st.switch_page("pages/login.py")  # BUG 6 — était "login.py" (chemin incorrect)
 
 
 def ask_agent(question: str, project_id: str,
-              project_name: str = "", user_id: str = "chef_projet", history: list = None) -> dict:
+              project_name: str = "", user_id: str = "chef_projet",
+              history: list = None, conversation_id: str = None) -> dict:
     try:
+        payload = {
+            "question": question,
+            "project_id": str(project_id),
+            "project_name": str(project_name),
+            "user_id": user_id,
+            "history": history or [],
+            "conversation_id": conversation_id
+        }
         resp = requests.post(
             f"{FASTAPI_URL}/chat",
-            json={"question": question, "project_id": str(project_id),
-                  "project_name": str(project_name), "user_id": user_id, 
-                  "history": history or []},
+            json=payload,
             headers=_get_headers(),
             timeout=TIMEOUT_CHAT,
         )

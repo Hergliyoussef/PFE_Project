@@ -33,8 +33,12 @@ if not current_project:
     st.error("⚠️ Aucun projet sélectionné. Choisissez-en un dans la barre latérale.")
     st.stop()
 
-project_id   = current_project["identifier"]
-project_name = current_project["name"]
+project_id   = current_project.get("identifier")
+project_name = current_project.get("name", "Projet")
+
+if not project_id or project_id in ["None", "inconnu"]:
+    st.warning("⚠️ Identifiant de projet invalide. Veuillez vous déconnecter et vous reconnecter.")
+    st.stop()
 
 # 4. AUTO-REFRESH (10 min)
 st_autorefresh(interval=600_000, key="monitor_refresh")
@@ -122,7 +126,32 @@ st.markdown("""
     background: linear-gradient(160deg, #07101f 0%, #0d1528 50%, #111827 100%) !important;
 }
 [data-testid="stMain"] { background: transparent !important; }
-#MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] { display:none !important; }
+
+/* Supprimer absolument tout ce qui dépasse (barres noires) */
+#MainMenu, footer, header, [data-testid="stToolbar"], [data-testid="stHeader"], [data-testid="stDecoration"], .stAppHeader {
+    display: none !important;
+    visibility: hidden !important;
+    height: 0 !important;
+}
+
+/* Fond uniforme pour la barre latérale également pour éviter les coupures */
+[data-testid="stSidebar"] {
+    background: #07101f !important;
+    border-right: 1px solid rgba(255,255,255,0.05) !important;
+}
+
+/* Optimiser la zone de contenu (Retirer les marges Streamlit par défaut) */
+.block-container {
+    padding-top: 1rem !important;
+    padding-bottom: 2rem !important;
+    max-width: 95% !important;
+}
+
+/* Ajuster l'espacement du chat pour qu'il ne laisse pas de vide en bas */
+[data-testid="stBottom"] {
+    background: transparent !important;
+    padding-bottom: 20px !important;
+}
 
 [data-testid="stChatMessage"] {
     animation: fadeInUp 0.4s ease both;
@@ -165,6 +194,7 @@ st.markdown(f"""
 """, unsafe_allow_html=True)
 
 # ── ALERTES & KPIs ───────────────────────────────────────────────
+# ── ALERTES ──────────────────────────────────────────────────────
 try:
     r_alerts = requests.get(f"{FASTAPI_URL}/alerts/{project_id}", headers=_get_headers(), timeout=10)
     if r_alerts.status_code == 200:
@@ -182,10 +212,19 @@ try:
                 alerts_html += f'<div style="text-align:right; font-size:11px; color:#475569; padding-right:10px; font-style:italic;">+ {count_extra} autres...</div>'
             alerts_html += '</div>'
             st.markdown(alerts_html, unsafe_allow_html=True)
+except Exception as e:
+    pass # Les alertes sont secondaires, on continue
 
+# ── MÉTRIQUES (KPIs) ───────────────────────────────────────────
+try:
     r_metrics = requests.get(f"{FASTAPI_URL}/projects/{project_id}/metrics", headers=_get_headers(), timeout=5)
     if r_metrics.status_code == 200:
         m = r_metrics.json()
+        
+        # Affichage du message d'erreur si présent
+        if "error" in m:
+            st.warning(f"⚠️ {m['error']}")
+
         st.markdown(f"""
 <div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:12px 0; animation: fadeInUp 0.5s ease both;">
 <div style="background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.2); border-radius:14px; padding:16px 20px;">
@@ -206,8 +245,10 @@ try:
 </div>
 </div>
 """, unsafe_allow_html=True)
-except Exception:
-    pass
+    else:
+        st.error(f"Erreur metrics: {r_metrics.status_code}")
+except Exception as e:
+    st.error(f"Erreur de connexion metrics: {e}")
 
 st.markdown('<div style="height:1px; background:linear-gradient(90deg,transparent,rgba(99,102,241,0.3),transparent); margin:16px 0;"></div>', unsafe_allow_html=True)
 
@@ -233,21 +274,27 @@ if "active_conv_id" not in st.session_state:
 if "messages" not in st.session_state: 
     st.session_state.messages = []
 
-if not st.session_state.messages:
-    try:
-        cur_conv_id = st.session_state.get("active_conv_id")
-        params = {"conversation_id": cur_conv_id} if cur_conv_id else {}
-        r = requests.get(f"{FASTAPI_URL}/history/{project_id}", params=params, headers=_get_headers(), timeout=5)
-        if r.status_code == 200:
-            h_data = r.json()
-            st.session_state.messages = h_data.get("history", [])
-            st.session_state["active_conv_id"] = h_data.get("conversation_id")
-    except Exception:
-        pass
-    
+# Logique de chargement (seulement si pas une nouvelle session forcée)
+if st.session_state.get("is_new_session"):
+    st.session_state.messages = []
+    st.session_state["active_conv_id"] = None
+    st.session_state["is_new_session"] = False # Consommé
+else:
     if not st.session_state.messages:
-        user_name = st.session_state.get("user", {}).get("firstname", "PM")
-        st.session_state.messages = [{"role":"assistant","content":f"Bonjour **{user_name}** ! 👋\n\nJe suis votre assistant IA pour **{project_name}**."}]
+        try:
+            cur_conv_id = st.session_state.get("active_conv_id")
+            params = {"conversation_id": cur_conv_id} if cur_conv_id else {}
+            r = requests.get(f"{FASTAPI_URL}/history/{project_id}", params=params, headers=_get_headers(), timeout=5)
+            if r.status_code == 200:
+                h_data = r.json()
+                st.session_state.messages = h_data.get("history", [])
+                st.session_state["active_conv_id"] = h_data.get("conversation_id")
+        except Exception:
+            pass
+
+if not st.session_state.messages:
+    user_name = st.session_state.get("user", {}).get("firstname", "PM")
+    st.session_state.messages = [{"role":"assistant","content":f"Bonjour **{user_name}** ! 👋\n\nJe suis votre assistant IA pour **{project_name}**."}]
 
 # Affichage
 for msg in st.session_state.messages:

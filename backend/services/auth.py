@@ -84,8 +84,19 @@ async def authenticate_with_redmine(login: str, password: str) -> Optional[dict]
         user_roles: set[str] = set()
         authorized_projects = []
         
+        # Résolution des identifiants (Redmine ne les donne pas dans memberships)
+        try:
+            from services.redmine_client import redmine
+            all_p = redmine.get_projects()
+            id_to_ident = {p["id"]: p.get("identifier") for p in all_p}
+        except:
+            id_to_ident = {}
+
         for membership in memberships:
             proj = membership.get("project", {})
+            p_id = proj.get("id")
+            p_ident = id_to_ident.get(p_id) or str(p_id) # Fallback sur l'ID si slug inconnu
+            
             m_roles = [r.get("name", "") for r in membership.get("roles", [])]
             
             # On stocke tous les rôles pour le JWT
@@ -96,9 +107,9 @@ async def authenticate_with_redmine(login: str, password: str) -> Optional[dict]
             is_authorized_on_proj = any(r in AUTHORIZED_ROLES for r in m_roles)
             if is_authorized_on_proj or is_admin:
                 authorized_projects.append({
-                    "id": proj.get("id"),
+                    "id": p_id,
                     "name": proj.get("name"),
-                    "identifier": proj.get("identifier")
+                    "identifier": p_ident
                 })
 
         # ── Contrôle d'accès ────────────────────────────────────────

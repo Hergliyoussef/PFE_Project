@@ -77,11 +77,13 @@ async def chat(
 
     # Gestion de l'ID conversation (Multi-session)
     conv_id = req.conversation_id
+    safe_proj_id = str(req.project_id) if req.project_id and str(req.project_id) != "None" else "inconnu"
+    
     if not conv_id:
-        conv_id = f"conv_{user_id_int}_{req.project_id}_{uuid.uuid4().hex[:8]}"
+        conv_id = f"conv_{user_id_int}_{safe_proj_id}_{uuid.uuid4().hex[:8]}"
 
     # 1. Historique court-terme (Redis - Isolé par session)
-    redis_key = f"{req.project_id}:{conv_id}"
+    redis_key = f"{safe_proj_id}:{conv_id}"
     redis_history = get_history(user_id_str, redis_key, last_n=8)
     context_history = redis_history if redis_history else req.history
 
@@ -197,7 +199,11 @@ async def get_project_metrics(
     try:
         metrics = get_cached_metrics(project_id)
         source = "cache"
-        if not metrics:
+        
+        # Si le cache est vide ou manque d'infos clés (ex: avg_progress), on force le live
+        is_invalid_cache = not metrics or "avg_progress" not in metrics
+        
+        if is_invalid_cache:
             source = "redmine (live)"
             from services.redmine_client import redmine
             computed = redmine.compute_project_metrics(project_id)
@@ -257,7 +263,7 @@ async def list_conversations(
         
         # Le project_id est extrait de l'ID conv (index 2)
         parts = conv.id.split("_")
-        project_id = parts[2] if len(parts) > 2 else conv.id
+        project_id = parts[2] if len(parts) > 2 else "inconnu"
 
         result.append({
             "id":            conv.id,
@@ -267,6 +273,8 @@ async def list_conversations(
             "last_message":  last_msg.content[:80] if last_msg else "",
             "message_count": msg_count,
         })
+    
+    logger.info(f"[Conversations] User {user_id_int} -> {len(result)} trouvées")
     return {"conversations": result}
 
 @router.post("/conversations/clear/{project_id}")

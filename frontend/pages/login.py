@@ -51,7 +51,11 @@ st.markdown("""
     font-family: 'Inter', sans-serif !important;
 }
 [data-testid="stMain"] { background:transparent !important; }
-#MainMenu, footer, [data-testid="stToolbar"], [data-testid="stDecoration"] { display:none !important; }
+#MainMenu, footer, header, [data-testid="stToolbar"], [data-testid="stHeader"], [data-testid="stDecoration"], .stAppHeader { 
+    display:none !important; 
+    visibility: hidden !important;
+    height: 0 !important;
+}
 
 .block-container { max-width:430px !important; padding:2rem 1.2rem !important; }
 

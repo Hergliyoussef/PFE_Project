@@ -34,61 +34,86 @@ st.markdown("""
     0%,100% { background-position:0% 50%; }
     50%      { background-position:100% 50%; }
 }
-@keyframes orbMove {
-    0%,100% { transform:translate(0,0) scale(1); }
-    50%      { transform:translate(30px,-20px) scale(1.08); }
-}
 @keyframes shine {
     0%   { left:-60%; }
     100% { left:160%; }
 }
 
-[data-testid="stAppViewContainer"] {
-    background: radial-gradient(ellipse at 20% 20%, rgba(79,70,229,0.15) 0%, transparent 55%),
-                radial-gradient(ellipse at 80% 80%, rgba(139,92,246,0.10) 0%, transparent 55%),
-                #060d1a !important;
-    min-height: 100vh;
-    font-family: 'Inter', sans-serif !important;
+html, body {
+    overflow: hidden !important;
+    margin: 0 !important;
+    padding: 0 !important;
 }
-[data-testid="stMain"] { background:transparent !important; }
+
+[data-testid="stAppViewContainer"] {
+    background: linear-gradient(160deg, #0f172a 0%, #1e293b 100%) !important; 
+    height: 100vh !important;
+    min-height: 100vh !important;
+    font-family: 'Inter', sans-serif !important;
+    overflow: hidden !important;
+}
+
+[data-testid="stMain"] { 
+    background:transparent !important; 
+    height: 100vh !important;
+    overflow: hidden !important;
+}
+
+[data-testid="stMain"] > div:first-child {
+    height: 100vh !important;
+    overflow: hidden !important;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+}
+
 #MainMenu, footer, header, [data-testid="stToolbar"], [data-testid="stHeader"], [data-testid="stDecoration"], .stAppHeader { 
     display:none !important; 
     visibility: hidden !important;
     height: 0 !important;
 }
 
-.block-container { max-width:430px !important; padding:2rem 1.2rem !important; }
+.block-container { 
+    max-width:380px !important; 
+    padding: 0 1rem !important; 
+    margin-top: 0 !important;
+    margin-bottom: 0 !important;
+    margin-left: auto !important;
+    margin-right: auto !important;
+    transform: scale(0.9); 
+    transform-origin: right center;
+}
 
 .stTextInput > label {
-    color:#64748b !important;
+    color:#94a3b8 !important;
     font-size:11px !important;
     font-weight:600 !important;
     text-transform:uppercase;
     letter-spacing:1px;
 }
 .stTextInput > div > div > input {
-    background:rgba(255,255,255,0.035) !important;
-    border:1px solid rgba(99,102,241,0.22) !important;
+    background:rgba(15, 23, 42, 0.4) !important;
+    border:1px solid rgba(148, 163, 184, 0.2) !important;
     border-radius:12px !important;
-    color:#e2e8f0 !important;
+    color:#f8fafc !important;
     font-family:'Inter',sans-serif !important;
     font-size:14px !important;
     padding:12px 16px !important;
     transition:all 0.3s ease !important;
-    caret-color:#6366f1;
+    box-shadow: 0 2px 6px rgba(0,0,0,0.1) !important;
 }
 .stTextInput > div > div > input:focus {
     border-color:#6366f1 !important;
-    background:rgba(99,102,241,0.07) !important;
-    box-shadow:0 0 0 3px rgba(99,102,241,0.15) !important;
+    background:rgba(15, 23, 42, 0.6) !important;
+    box-shadow:0 0 0 3px rgba(99,102,241,0.15), 0 4px 12px rgba(0,0,0,0.1) !important;
 }
-.stTextInput > div > div > input::placeholder { color:#334155 !important; }
+.stTextInput > div > div > input::placeholder { color:#475569 !important; }
 
 .stButton > button {
     width:100% !important;
     position:relative !important;
     overflow:hidden !important;
-    background: linear-gradient(135deg,#4f46e5,#7c3aed,#9333ea) !important;
+    background: linear-gradient(135deg,#4f46e5,#7c3aed) !important;
     background-size:200% 200% !important;
     animation: gradShift 4s ease infinite !important;
     color:#fff !important;
@@ -99,19 +124,19 @@ st.markdown("""
     font-weight:600 !important;
     padding:13px 24px !important;
     letter-spacing:0.3px !important;
-    box-shadow:0 4px 24px rgba(79,70,229,0.4) !important;
+    box-shadow:0 6px 20px rgba(79,70,229,0.2) !important;
     transition:all 0.3s ease !important;
 }
 .stButton > button:hover {
     transform:translateY(-2px) !important;
-    box-shadow:0 8px 32px rgba(79,70,229,0.55) !important;
+    box-shadow:0 8px 28px rgba(79,70,229,0.35) !important;
 }
 .stButton > button::after {
     content:'';
     position:absolute;
     top:0; left:-60%;
     width:40%; height:100%;
-    background:linear-gradient(90deg,transparent,rgba(255,255,255,0.18),transparent);
+    background:linear-gradient(90deg,transparent,rgba(255,255,255,0.15),transparent);
     animation: shine 3s ease-in-out infinite;
     transform:skewX(-15deg);
 }
@@ -123,7 +148,7 @@ st.markdown("""
 }
 .stSpinner > div { border-top-color:#6366f1 !important; }
 hr { border:none !important; height:1px !important;
-     background:linear-gradient(90deg,transparent,rgba(99,102,241,0.3),transparent) !important; }
+     background:linear-gradient(90deg,transparent,rgba(99,102,241,0.2),transparent) !important; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -131,24 +156,24 @@ if st.session_state.get("authenticated"):
     st.switch_page("pages/chat.py")
 
 st.markdown("""
-<div style="text-align:center; padding:44px 0 32px 0; animation:fadeInUp 0.5s ease both;">
+<div style="text-align:center; padding:10px 0 24px 0; animation:fadeInUp 0.5s ease both;">
 <div style="position:relative; width:96px; height:96px; margin:0 auto 20px auto;">
-<div style="position:absolute; top:50%; left:50%; width:96px; height:96px; border:2px solid rgba(99,102,241,0.5); border-radius:28px; animation:pulseRing 2.5s ease-out infinite;"></div>
-<div style="position:absolute; top:50%; left:50%; width:96px; height:96px; border:2px solid rgba(139,92,246,0.3); border-radius:28px; animation:pulseRing 2.5s ease-out 1.25s infinite;"></div>
-<div style="position:relative; z-index:1; width:96px; height:96px; background:linear-gradient(135deg,rgba(79,70,229,0.25),rgba(139,92,246,0.2)); border:1px solid rgba(99,102,241,0.35); border-radius:28px; display:flex; align-items:center; justify-content:center; font-size:46px; line-height:1; box-shadow:0 0 50px rgba(99,102,241,0.2); animation:floatY 4s ease-in-out infinite;">🤖</div>
+<div style="position:absolute; top:50%; left:50%; width:96px; height:96px; border:2px solid rgba(99,102,241,0.4); border-radius:28px; animation:pulseRing 2.5s ease-out infinite;"></div>
+<div style="position:absolute; top:50%; left:50%; width:96px; height:96px; border:2px solid rgba(139,92,246,0.25); border-radius:28px; animation:pulseRing 2.5s ease-out 1.25s infinite;"></div>
+<div style="position:relative; z-index:1; width:96px; height:96px; background:linear-gradient(135deg,rgba(79,70,229,0.25),rgba(139,92,246,0.2)); border:1px solid rgba(99,102,241,0.35); border-radius:28px; display:flex; align-items:center; justify-content:center; font-size:46px; line-height:1; box-shadow:0 8px 32px rgba(99,102,241,0.15); animation:floatY 4s ease-in-out infinite;">🤖</div>
 </div>
-<div style="font-size:26px; font-weight:800; letter-spacing:-0.5px; margin-bottom:6px; background:linear-gradient(135deg,#f1f5f9 0%,#a5b4fc 45%,#8b5cf6 100%); background-size:200% 200%; animation:gradShift 5s ease infinite; -webkit-background-clip:text; -webkit-text-fill-color:transparent;">PM Assistant</div>
-<div style="font-size:13px; color:#475569; letter-spacing:0.3px;">Chatbot IA d'Assistance à la Gestion de Projet</div>
+<div style="font-size:30px; font-weight:800; letter-spacing:-0.5px; margin-bottom:6px; background:linear-gradient(135deg,#f8fafc 0%,#a5b4fc 50%,#8b5cf6 100%); background-size:200% 200%; animation:gradShift 5s ease infinite; -webkit-background-clip:text; -webkit-text-fill-color:transparent;">PM Assistant</div>
+<div style="font-size:20px; color:#94a3b8; letter-spacing:2.5px;">Chatbot IA d'Assistance à la Gestion de Projet</div>
 </div>
 """, unsafe_allow_html=True)
 
 st.markdown("""
-<div style="background:linear-gradient(135deg,rgba(15,23,42,0.85),rgba(20,28,48,0.9)); border:1px solid rgba(99,102,241,0.18); border-radius:20px; padding:28px 28px 20px; backdrop-filter:blur(30px); box-shadow:0 24px 64px rgba(0,0,0,0.5),inset 0 1px 0 rgba(255,255,255,0.04); animation:fadeInUp 0.65s ease both;">
-<div style="font-size:15px; font-weight:600; color:#e2e8f0; margin-bottom:4px;">Connexion</div>
-<div style="font-size:12px; color:#475569; margin-bottom:20px;">Utilisez vos identifiants Redmine</div>
+<div style="background:rgba(30, 41, 59, 0.4); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:2px 2px 2px; backdrop-filter:blur(24px);  inset 0 1px 0 rgba(255,255,255,0.05); animation:fadeInUp 0.65s ease both;">
+<div style="font-size:20px; font-weight:700; color:#f8fafc; margin-bottom:4px;">Connexion</div>
+<div style="font-size:15px; color:#94a3b8; margin-bottom:24px;">Utilisez vos identifiants Redmine</div>
 """, unsafe_allow_html=True)
 
-login    = st.text_input("Identifiant", placeholder="votre.login", key="login_input")
+login    = st.text_input("Identifiant", placeholder="votre.identifiant", key="login_input")
 password = st.text_input("Mot de passe", type="password", placeholder="••••••••", key="pwd_input")
 
 st.markdown('<div style="height:10px;"></div>', unsafe_allow_html=True)
@@ -162,7 +187,7 @@ if st.button("🔓  Se connecter", use_container_width=True, key="login_btn"):
                 resp = requests.post(
                     f"{FASTAPI_URL}/auth/login",
                     json={"login": login, "password": password},
-                    timeout=20,
+                    timeout=30,
                 )
 
                 if resp.status_code == 200:
@@ -182,7 +207,7 @@ if st.button("🔓  Se connecter", use_container_width=True, key="login_btn"):
 
                 elif resp.status_code == 403:
                     detail = resp.json().get("detail", "Accès refusé.")
-                    st.error(f"🚫 {detail} Contactez votre administrateur.")
+                    st.error(f"🚫 {detail}")
 
                 elif resp.status_code == 401:
                     st.error("❌ Identifiant ou mot de passe incorrect.")

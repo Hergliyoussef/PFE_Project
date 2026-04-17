@@ -16,6 +16,9 @@ def get_project_metrics(project_id: str) -> str:
     """Retourne les métriques globales : avancement, retards, complétion."""
     try:
         data = redmine.compute_project_metrics(project_id)
+        # Ajout d'une note explicite contextuelle pour éviter que l'IA ne se trompe de métrique 
+        # (ex: confondre completion_rate et avancement global)
+        data["contexte_ia"] = "L'avancement général et officiel du projet est représenté UNIQUEMENT par la variable 'avg_progress'. Ne pas utiliser completion_rate comme avancement."
         return json.dumps(data, ensure_ascii=False, indent=2)
     except Exception as e:
         return json.dumps({"error": str(e)})
@@ -168,7 +171,7 @@ def classify_risk(project_id: str) -> str:
     except Exception as e:
         return json.dumps({"error": str(e)})
 
-# --- LISTES D'OUTILS MISES À JOUR ---
+
 
 ALL_TOOLS = [
     get_project_metrics, get_overdue_issues, get_critical_path,

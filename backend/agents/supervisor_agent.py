@@ -1,6 +1,5 @@
 """
 Superviseur — backend/agents/supervisor_agent.py
-Architecture LangGraph corrigée et synchronisée avec FastAPI
 """
 import json
 import logging

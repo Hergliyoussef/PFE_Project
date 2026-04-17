@@ -48,7 +48,7 @@ ROLE_PRIORITY = {
     "D développeur": 10,  # Gestion de l'encodage Redmine probable
     "Développeur": 10,
     "Developer": 10,
-    "Rapporteur": 20,
+    "Rapporteur": 10,
 }
 
 

@@ -70,28 +70,32 @@ def render_sidebar():
 /* Masquer le scroll padding de Streamlit */
 [data-testid="stSidebarUserContent"] {
     padding: 0 !important;
+    height: 100vh !important;
+    overflow: hidden !important;
 }
 
 /* Forcer le conteneur principal en Flexbox 100vh */
-[data-testid="stSidebarUserContent"] > div:first-child > div:first-child {
+[data-testid="stSidebarUserContent"] > div {
+    height: 100vh !important;
+}
+[data-testid="stSidebarUserContent"] > div > div[data-testid="stVerticalBlock"] {
     display: flex !important;
     flex-direction: column !important;
     height: 100vh !important;
-    max-height: 100vh !important;
     overflow: hidden !important; 
     gap: 0 !important;
 }
 
 /* --- SECTION HAUT (HEADER) --- */
-[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-top="1"]) {
+div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-top="1"]) {
     flex-shrink: 0 !important;
-    padding: 0px 1rem 8px 1rem !important;
+    padding: 1rem 1rem 8px 1rem !important;
     border-bottom: 1px solid rgba(255,255,255,0.05) !important;
     z-index: 10;
 }
 
 /* --- SECTION MILIEU (SCROLLABLE) --- */
-[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-middle="1"]) {
+div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-middle="1"]) {
     flex-grow: 1 !important;
     overflow-y: auto !important; 
     overflow-x: hidden !important;
@@ -100,19 +104,19 @@ def render_sidebar():
     scrollbar-color: rgba(99,102,241,0.2) transparent;
 }
 /* Style Scrollbar */
-[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-middle="1"])::-webkit-scrollbar {
+div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-middle="1"])::-webkit-scrollbar {
     width: 5px;
 }
-[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-middle="1"])::-webkit-scrollbar-thumb {
+div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-middle="1"])::-webkit-scrollbar-thumb {
     background: rgba(99,102,241,0.15);
     border-radius: 10px;
 }
 
 /* --- SECTION BAS (FOOTER) --- */
-[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-bottom="1"]) {
+div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-bottom="1"]) {
     flex-shrink: 0 !important;
     margin-top: auto !important;
-    padding: 0 1rem 8px 1rem !important; /* Bottom extremity tuck */
+    padding: 8px 1rem 1rem 1rem !important;
     border-top: 1px solid rgba(255,255,255,0.05) !important;
     z-index: 10;
 }
@@ -209,28 +213,29 @@ div[data-conv-active="1"] button {
                 st.selectbox("P", options=project_names, index=current_index, key="project_selector_sidebar", on_change=on_project_change, label_visibility="collapsed")
 
         # ── 2. MILIEU (SCROLLABLE) ──────────────────────────────────
-        st.markdown('<div data-sidebar-middle="1"></div>', unsafe_allow_html=True)
-        st.markdown('<div style="margin-top:10px; font-size:10px; color:#475569; font-weight:700;">💬 DISCUSSIONS RÉCENTES</div>', unsafe_allow_html=True)
-        
-        conversations = _load_conversations()
-        active_proj_id = st.session_state.get("active_project", {}).get("identifier", "")
-        active_conv_id = st.session_state.get("active_conv_id")
+        with st.container():
+            st.markdown('<div data-sidebar-middle="1"></div>', unsafe_allow_html=True)
+            st.markdown('<div style="margin-top:10px; font-size:10px; color:#475569; font-weight:700;">💬 DISCUSSIONS RÉCENTES</div>', unsafe_allow_html=True)
+            
+            conversations = _load_conversations()
+            active_proj_id = st.session_state.get("active_project", {}).get("identifier", "")
+            active_conv_id = st.session_state.get("active_conv_id")
 
-        if conversations:
-            for conv in conversations:
-                if conv["project_id"] != active_proj_id: continue
-                is_active = (conv["id"] == active_conv_id)
-                attr = 'data-conv-active="1"' if is_active else 'data-conv-item="1"'
-                try: c_date = datetime.fromisoformat(conv["created_at"].replace("Z", "+00:00")).strftime("%d/%m")
-                except: c_date = "--/--"
-                label = f"{'🔵' if is_active else '💬'} {c_date} - {conv['title'][:25]}"
-                
-                st.markdown(f'<div {attr}>', unsafe_allow_html=True)
-                if st.button(label, key=f"conv_btn_{conv['id']}", use_container_width=True):
-                    _select_conversation(conv)
-                st.markdown("</div>", unsafe_allow_html=True)
-        else:
-            st.info("Aucune discussion.")
+            if conversations:
+                for conv in conversations:
+                    if conv["project_id"] != active_proj_id: continue
+                    is_active = (conv["id"] == active_conv_id)
+                    attr = 'data-conv-active="1"' if is_active else 'data-conv-item="1"'
+                    try: c_date = datetime.fromisoformat(conv["created_at"].replace("Z", "+00:00")).strftime("%d/%m")
+                    except: c_date = "--/--"
+                    label = f"{'🔵' if is_active else '💬'} {c_date} - {conv['title'][:25]}"
+                    
+                    st.markdown(f'<div {attr}>', unsafe_allow_html=True)
+                    if st.button(label, key=f"conv_btn_{conv['id']}", use_container_width=True):
+                        _select_conversation(conv)
+                    st.markdown("</div>", unsafe_allow_html=True)
+            else:
+                st.info("Aucune discussion.")
 
         # ── 3. BAS (FIXÉ) ───────────────────────────────────────────
         if "user" in st.session_state:

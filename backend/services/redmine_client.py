@@ -99,6 +99,11 @@ class RedmineClient:
             } for m in memberships
         ]
 
+    def get_closed_status_ids(self) -> list[int]:
+        data = self._get("/issue_statuses.json")
+        statuses = data.get("issue_statuses", [])
+        return [s["id"] for s in statuses if s.get("is_closed")]
+
     # --- MÉTRIQUES CALCULÉES (LE CŒUR DE L'IA) ---
     def compute_project_metrics(self, project_id: str) -> dict:
         """
@@ -107,8 +112,21 @@ class RedmineClient:
         versions = self.get_versions(project_id)
         all_issues = self.get_issues(project_id, status="*")
         
-        open_issues = [i for i in all_issues if not i.get("status", {}).get("is_closed")]
-        done_issues = [i for i in all_issues if i.get("status", {}).get("is_closed")]
+        closed_ids = self.get_closed_status_ids()
+        
+        def is_issue_closed(i):
+            if i.get("status", {}).get("id") in closed_ids:
+                return True
+            # Fallback
+            name = str(i.get("status", {}).get("name", "")).lower()
+            if any(x in name for x in ["clos", "fermé", "resolv", "résolu", "termin", "rejet"]):
+                return True
+            if i.get("status", {}).get("is_closed"):
+                return True
+            return False
+
+        open_issues = [i for i in all_issues if not is_issue_closed(i)]
+        done_issues = [i for i in all_issues if is_issue_closed(i)]
         overdue = self.get_overdue_issues(project_id)
         not_started = self.get_not_started_issues(project_id)
         
@@ -116,18 +134,29 @@ class RedmineClient:
         blocking_issues = [
             i for i in all_issues 
             if any(rel["relation_type"] == "precedes" for rel in i.get("relations", []))
-            and i.get("done_ratio", 0) < 100
+            and not is_issue_closed(i)
         ]
         
         # Détection des problèmes critiques (priorité haute + non terminé)
         critical_issues = [
             i for i in all_issues
-            if i.get("priority", {}).get("id", 0) >= 4 and i.get("done_ratio", 0) < 100
+            if i.get("priority", {}).get("id", 0) >= 4 and not is_issue_closed(i)
         ]
 
         total = len(all_issues) or 1
-        # Calcul de la progression sur TOUS les problèmes (pas seulement les ouverts)
-        avg_done = sum(i.get("done_ratio", 0) for i in all_issues) / total
+        
+        # Calcul de la progression sur TOUS les problèmes
+        computed_ratios = []
+        for i in all_issues:
+            ratio = i.get("done_ratio", 0)
+            if is_issue_closed(i) and ratio == 0:
+                ratio = 100
+            computed_ratios.append(ratio)
+            
+        avg_done = sum(computed_ratios) / total
+        completion_rate = (len(done_issues) / total) * 100
+        
+        final_progress = max(avg_done, completion_rate)
 
         # Retourne un dictionnaire propre et structuré
         return {
@@ -140,8 +169,8 @@ class RedmineClient:
             "blocking_issues_count": len(blocking_issues),
             "critical_issues": len(critical_issues),
             "active_versions": len([v for v in versions if v.get("status") == "open"]),
-            "avg_progress": round(avg_done, 1),
-            "completion_rate": round(len(done_issues) / total * 100, 1),
+            "avg_progress": round(final_progress, 1),
+            "completion_rate": round(completion_rate, 1),
             "max_workload": round(max([min((h / 40) * 100, 100) for h in self.get_time_by_user(project_id).values()], default=0), 1),
             "time_by_user": self.get_time_by_user(project_id),
             "overdue_list": [

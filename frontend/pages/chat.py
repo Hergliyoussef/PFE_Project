@@ -154,18 +154,25 @@ st.markdown("""
 }
 
 [data-testid="stChatMessage"] {
-    animation: fadeInUp 0.4s ease both;
+    animation: slideInUp 0.5s cubic-bezier(0.16, 1, 0.3, 1) both;
     background: transparent !important;
+    margin-bottom: 8px !important;
+}
+@keyframes slideInUp {
+    from { opacity:0; transform:translateY(30px) scale(0.97); }
+    to   { opacity:1; transform:translateY(0) scale(1); }
 }
 [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-user"]) [data-testid="stChatMessageContent"] {
     background: rgba(99,102,241,0.15) !important;
     border: 1px solid rgba(99,102,241,0.2) !important;
     border-radius: 16px 4px 16px 16px !important;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
 }
 [data-testid="stChatMessage"]:has([data-testid="chatAvatarIcon-assistant"]) [data-testid="stChatMessageContent"] {
     background: rgba(255,255,255,0.03) !important;
     border: 1px solid rgba(255,255,255,0.07) !important;
     border-radius: 4px 16px 16px 16px !important;
+    box-shadow: 0 4px 12px rgba(0,0,0,0.1);
 }
 </style>
 """, unsafe_allow_html=True)
@@ -180,18 +187,26 @@ if st.session_state["last_project_id"] != project_id:
     st.rerun()
 
 # ── HEADER ──────────────────────────────────────────────────────
-st.markdown(f"""
-<div style="display:flex; align-items:center; justify-content:space-between; padding: 8px 0 16px 0; animation: fadeInUp 0.4s ease both;">
-<div>
-<div style="font-size:22px; font-weight:700; background: linear-gradient(135deg, #f1f5f9, #a5b4fc); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">🤖 PM Assistant</div>
-<div style="font-size:13px; color:#475569;">Projet : <span style="color:#818cf8; font-weight:600;">{project_name}</span></div>
-</div>
-<div style="display:flex; align-items:center; gap:8px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px; padding:8px 14px;">
-<div style="width:8px; height:8px; border-radius:50%; background:#22c55e; box-shadow:0 0 8px rgba(34,197,94,0.6); animation: pulse 2s ease infinite;"></div>
-<span style="font-size:12px; color:#64748b;">Système actif</span>
-</div>
-</div>
-""", unsafe_allow_html=True)
+head_col1, head_col2 = st.columns([1.5, 1])
+with head_col1:
+    st.markdown(f"""
+    <div style="animation: fadeInUp 0.4s ease both;">
+    <div style="font-size:22px; font-weight:700; background: linear-gradient(135deg, #f1f5f9, #a5b4fc); -webkit-background-clip:text; -webkit-text-fill-color:transparent;">🤖 PM Assistant</div>
+    <div style="font-size:13px; color:#475569;">Projet : <span style="color:#818cf8; font-weight:600;">{project_name}</span></div>
+    </div>
+    """, unsafe_allow_html=True)
+with head_col2:
+    sub_col1, sub_col2 = st.columns([1.5, 1])
+    with sub_col1:
+        if st.button("📊 Dashboard Temps Réel", use_container_width=True):
+            st.switch_page("pages/dashboard.py")
+    with sub_col2:
+        st.markdown(f"""
+        <div style="display:flex; align-items:center; justify-content:center; gap:8px; background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.07); border-radius:10px; padding:6px 10px; min-height:40px;">
+            <div style="width:8px; height:8px; border-radius:50%; background:#22c55e; box-shadow:0 0 8px rgba(34,197,94,0.6); animation: pulse 2s ease infinite;"></div>
+            <span style="font-size:12px; color:#64748b;">Système actif</span>
+        </div>
+        """, unsafe_allow_html=True)
 
 # ── ALERTES & KPIs ───────────────────────────────────────────────
 # ── ALERTES ──────────────────────────────────────────────────────
@@ -215,42 +230,7 @@ try:
 except Exception as e:
     pass # Les alertes sont secondaires, on continue
 
-# ── MÉTRIQUES (KPIs) ───────────────────────────────────────────
-try:
-    r_metrics = requests.get(f"{FASTAPI_URL}/projects/{project_id}/metrics", headers=_get_headers(), timeout=5)
-    if r_metrics.status_code == 200:
-        m = r_metrics.json()
-        
-        # Affichage du message d'erreur si présent
-        if "error" in m:
-            st.warning(f"⚠️ {m['error']}")
-
-        st.markdown(f"""
-<div style="display:grid; grid-template-columns:repeat(4,1fr); gap:12px; margin:12px 0; animation: fadeInUp 0.5s ease both;">
-<div style="background:rgba(99,102,241,0.08); border:1px solid rgba(99,102,241,0.2); border-radius:14px; padding:16px 20px;">
-<div style="font-size:11px;color:#6366f1;text-transform:uppercase;font-weight:600;">📈 Avancement</div>
-<div style="font-size:26px;font-weight:800;color:#a5b4fc;">{m.get("avancement",0)}%</div>
-</div>
-<div style="background:rgba(239,68,68,0.08); border:1px solid rgba(239,68,68,0.2); border-radius:14px; padding:16px 20px;">
-<div style="font-size:11px;color:#ef4444;text-transform:uppercase;font-weight:600;">⏰ En retard</div>
-<div style="font-size:26px;font-weight:800;color:#fca5a5;">{m.get("retard",0)}</div>
-</div>
-<div style="background:rgba(245,158,11,0.08); border:1px solid rgba(245,158,11,0.2); border-radius:14px; padding:16px 20px;">
-<div style="font-size:11px;color:#f59e0b;text-transform:uppercase;font-weight:600;">⚠️ Risques</div>
-<div style="font-size:26px;font-weight:800;color:#fcd34d;">{m.get("risques",0)}</div>
-</div>
-<div style="background:rgba(20,184,166,0.08); border:1px solid rgba(20,184,166,0.2); border-radius:14px; padding:16px 20px;">
-<div style="font-size:11px;color:#14b8a6;text-transform:uppercase;font-weight:600;">💪 Charge</div>
-<div style="font-size:26px;font-weight:800;color:#5eead4;">{m.get("charge",0)}%</div>
-</div>
-</div>
-""", unsafe_allow_html=True)
-    else:
-        st.error(f"Erreur metrics: {r_metrics.status_code}")
-except Exception as e:
-    st.error(f"Erreur de connexion metrics: {e}")
-
-st.markdown('<div style="height:1px; background:linear-gradient(90deg,transparent,rgba(99,102,241,0.3),transparent); margin:16px 0;"></div>', unsafe_allow_html=True)
+st.markdown('<div style="height:1px; margin:16px 0;"></div>', unsafe_allow_html=True)
 
 # ── GRAPHIQUES & LOGIQUE ────────────────────────────────────────
 def _plotly_layout():

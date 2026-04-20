@@ -27,11 +27,11 @@ def _handle_401():
     """Si token expiré → déconnecter et rediriger."""
     st.warning("⚠️ Session expirée. Reconnectez-vous.")
     
-    # Suppression des cookies
+    # Suppression des cookies (Unique Keys required for .delete)
     try:
-        cookie_manager.delete("access_token")
-        cookie_manager.delete("refresh_token")
-        cookie_manager.delete("user")
+        cookie_manager.delete("access_token", key="del_at_401")
+        cookie_manager.delete("refresh_token", key="del_rt_401")
+        cookie_manager.delete("user", key="del_user_401")
     except Exception:
         pass
 

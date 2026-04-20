@@ -4,9 +4,32 @@ Garde d'authentification & Sidebar — frontend/utils/auth_guard.py
 import streamlit as st
 import requests
 from datetime import datetime
+import json
 from utils.cookies import cookie_manager
 
 FASTAPI_URL = "http://localhost:8000/api/v1"
+
+def _try_restore_session():
+    """Tente de restaurer la session depuis les cookies si non authentifié."""
+    if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
+        access_token = cookie_manager.get("access_token")
+        if access_token:
+            try:
+                user_json = cookie_manager.get("user")
+                if user_json:
+                    user_data = json.loads(user_json)
+                    st.session_state["access_token"]   = access_token
+                    st.session_state["refresh_token"]  = cookie_manager.get("refresh_token")
+                    st.session_state["user"]           = user_data
+                    st.session_state["authenticated"]  = True
+                    
+                    projects = user_data.get("authorized_projects", [])
+                    st.session_state["projects"]       = projects
+                    st.session_state["active_project"] = projects[0] if projects else None
+                    return True
+            except Exception:
+                pass
+    return False
 
 def _get_headers() -> dict:
     token = st.session_state.get("access_token", "")
@@ -45,6 +68,10 @@ def _new_conversation():
     st.rerun()
 
 def require_login():
+    # 1. Tentative de restauration auto via cookies si besoin
+    _try_restore_session()
+    
+    # 2. Vérification finale
     if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
         st.switch_page("pages/login.py")
         st.stop()
@@ -258,11 +285,11 @@ div[data-conv-active="1"] button {
                     
                     st.markdown('<div data-logout="1">', unsafe_allow_html=True)
                     if st.button("🚪 Déconnexion", key="sidebar_logout_btn", width='stretch'):
-                        # Suppression des cookies
+                        # Suppression des cookies (Unique Keys required for .delete)
                         try:
-                            cookie_manager.delete("access_token")
-                            cookie_manager.delete("refresh_token")
-                            cookie_manager.delete("user")
+                            cookie_manager.delete("access_token", key="del_at_logout")
+                            cookie_manager.delete("refresh_token", key="del_rt_logout")
+                            cookie_manager.delete("user", key="del_user_logout")
                         except Exception:
                             pass
                         

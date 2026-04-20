@@ -5,6 +5,7 @@ frontend/pages/login.py
 import streamlit as st
 import requests
 from utils.cookies import cookie_manager
+from utils.auth_guard import _try_restore_session
 import json
 
 FASTAPI_URL = "http://localhost:8000/api/v1"
@@ -154,8 +155,10 @@ hr { border:none !important; height:1px !important;
 </style>
 """, unsafe_allow_html=True)
 
-if st.session_state.get("authenticated"):
+# AUTO-REDIRECT SI DÉJÀ CONNECTÉ (via Session ou Cookies)
+if _try_restore_session() or st.session_state.get("authenticated"):
     st.switch_page("pages/chat.py")
+    st.stop()
 
 st.markdown("""
 <div style="text-align:center; padding:10px 0 24px 0; animation:fadeInUp 0.5s ease both;">
@@ -204,12 +207,11 @@ if st.button("🔓  Se connecter", width='stretch', key="login_btn"):
                     st.session_state["projects"]     = projects
                     st.session_state["active_project"] = projects[0] if projects else None
 
-                    # PERSISTENCE via Cookies
+                    # PERSISTENCE via Cookies (Clés uniques requises pour éviter les erreurs de duplication)
                     try:
-                        # On définit un expiry (1 heure pour access, 7 jours pour refresh & user)
-                        cookie_manager.set("access_token", data["access_token"])
-                        cookie_manager.set("refresh_token", data["refresh_token"])
-                        cookie_manager.set("user", json.dumps(data["user"]))
+                        cookie_manager.set("access_token", data["access_token"], key="set_at_login")
+                        cookie_manager.set("refresh_token", data["refresh_token"], key="set_rt_login")
+                        cookie_manager.set("user", json.dumps(data["user"]), key="set_user_login")
                     except Exception as e:
                         print(f"Erreur Cookie : {e}")
 

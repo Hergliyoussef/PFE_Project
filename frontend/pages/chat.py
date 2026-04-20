@@ -198,7 +198,7 @@ with head_col1:
 with head_col2:
     sub_col1, sub_col2 = st.columns([1.5, 1])
     with sub_col1:
-        if st.button("📊 Dashboard Temps Réel", use_container_width=True):
+        if st.button("📊 Dashboard Temps Réel", width='stretch'):
             st.switch_page("pages/dashboard.py")
     with sub_col2:
         st.markdown(f"""
@@ -241,11 +241,11 @@ def render_component(dtype, data):
         df = pd.DataFrame([{"T": i["subject"][:30], "D": i.get("start_date") or str(date.today()), "F": i.get("due_date") or str(date.today())} for i in data["issues"]])
         fig = px.timeline(df, x_start="D", x_end="F", y="T", title="📅 Planning")
         fig.update_layout(**_plotly_layout())
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
     elif dtype == "workload" and data.get("time_by_user"):
         fig = go.Figure(go.Bar(x=list(data["time_by_user"].values()), y=list(data["time_by_user"].keys()), orientation="h"))
         fig.update_layout(title="💪 Charge", **_plotly_layout())
-        st.plotly_chart(fig, use_container_width=True)
+        st.plotly_chart(fig, width='stretch')
 
 # ── MESSAGES (Historique Multi-session) ─────────────────────────
 if "active_conv_id" not in st.session_state:

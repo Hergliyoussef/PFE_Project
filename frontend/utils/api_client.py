@@ -5,12 +5,13 @@ Envoie le JWT dans chaque requête FastAPI.
 import requests
 import logging
 import streamlit as st
-
 logger = logging.getLogger(__name__)
 FASTAPI_URL     = "http://localhost:8000/api/v1"
 TIMEOUT_CHAT    = 90
 TIMEOUT_METRICS = 20
 TIMEOUT_ALERTS  = 5
+
+from utils.cookies import cookie_manager
 
 
 def _get_headers() -> dict:
@@ -25,9 +26,18 @@ def _get_headers() -> dict:
 def _handle_401():
     """Si token expiré → déconnecter et rediriger."""
     st.warning("⚠️ Session expirée. Reconnectez-vous.")
+    
+    # Suppression des cookies
+    try:
+        cookie_manager.delete("access_token")
+        cookie_manager.delete("refresh_token")
+        cookie_manager.delete("user")
+    except Exception:
+        pass
+
     for key in list(st.session_state.keys()):
         del st.session_state[key]
-    st.switch_page("pages/login.py")  # BUG 6 — était "login.py" (chemin incorrect)
+    st.switch_page("pages/login.py") 
 
 
 def ask_agent(question: str, project_id: str,

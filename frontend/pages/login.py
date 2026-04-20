@@ -4,6 +4,8 @@ frontend/pages/login.py
 """
 import streamlit as st
 import requests
+from utils.cookies import cookie_manager
+import json
 
 FASTAPI_URL = "http://localhost:8000/api/v1"
 
@@ -178,7 +180,7 @@ password = st.text_input("Mot de passe", type="password", placeholder="•••
 
 st.markdown('<div style="height:10px;"></div>', unsafe_allow_html=True)
 
-if st.button("🔓  Se connecter", use_container_width=True, key="login_btn"):
+if st.button("🔓  Se connecter", width='stretch', key="login_btn"):
     if not login or not password:
         st.error("⚠️ Veuillez remplir tous les champs.")
     else:
@@ -201,6 +203,15 @@ if st.button("🔓  Se connecter", use_container_width=True, key="login_btn"):
                     projects = data["user"].get("authorized_projects", [])
                     st.session_state["projects"]     = projects
                     st.session_state["active_project"] = projects[0] if projects else None
+
+                    # PERSISTENCE via Cookies
+                    try:
+                        # On définit un expiry (1 heure pour access, 7 jours pour refresh & user)
+                        cookie_manager.set("access_token", data["access_token"])
+                        cookie_manager.set("refresh_token", data["refresh_token"])
+                        cookie_manager.set("user", json.dumps(data["user"]))
+                    except Exception as e:
+                        print(f"Erreur Cookie : {e}")
 
                     st.success(f"✅ Bienvenue, {data['user']['firstname']} !")
                     st.rerun()

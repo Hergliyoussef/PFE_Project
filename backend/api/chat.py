@@ -226,8 +226,12 @@ async def get_project_metrics(
             logger.info(f"[Metrics] Project={project_id} Source={source} -> Av={avancement}% Load={charge}%")
 
             return {
-                "avancement": avancement, "retard": retard,
-                "risques": risques, "charge": charge, "delta": 0
+                "avancement":   avancement,
+                "retard":       retard,
+                "risques":      risques,
+                "charge":       charge,
+                "delta":        0,
+                "total_issues": int(_to_float(metrics.get("total_issues", 0))),
             }
         except Exception as e:
             logger.warning(f"[Metrics] Erreur formatage pour {project_id}: {e}")

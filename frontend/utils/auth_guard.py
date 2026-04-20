@@ -4,6 +4,7 @@ Garde d'authentification & Sidebar — frontend/utils/auth_guard.py
 import streamlit as st
 import requests
 from datetime import datetime
+from utils.cookies import cookie_manager
 
 FASTAPI_URL = "http://localhost:8000/api/v1"
 
@@ -188,7 +189,7 @@ div[data-conv-active="1"] button {
 """, unsafe_allow_html=True)
 
             st.markdown('<div data-conv-new="1">', unsafe_allow_html=True)
-            if st.button("✏️  Nouvelle conversation", key="new_conv_btn", use_container_width=True):
+            if st.button("💬  Nouvelle conversation", key="new_conv_btn", width='stretch'):
                 _new_conversation()
             st.markdown("</div>", unsafe_allow_html=True)
 
@@ -228,10 +229,10 @@ div[data-conv-active="1"] button {
                     attr = 'data-conv-active="1"' if is_active else 'data-conv-item="1"'
                     try: c_date = datetime.fromisoformat(conv["created_at"].replace("Z", "+00:00")).strftime("%d/%m")
                     except: c_date = "--/--"
-                    label = f"{'🔵' if is_active else '💬'} {c_date} - {conv['title'][:25]}"
+                    label = f"{'🟢' if is_active else '⚫'} {c_date} - {conv['title'][:25]}"
                     
                     st.markdown(f'<div {attr}>', unsafe_allow_html=True)
-                    if st.button(label, key=f"conv_btn_{conv['id']}", use_container_width=True):
+                    if st.button(label, key=f"conv_btn_{conv['id']}", width='stretch'):
                         _select_conversation(conv)
                     st.markdown("</div>", unsafe_allow_html=True)
             else:
@@ -256,7 +257,15 @@ div[data-conv-active="1"] button {
                     """, unsafe_allow_html=True)
                     
                     st.markdown('<div data-logout="1">', unsafe_allow_html=True)
-                    if st.button("🚪 Déconnexion", key="sidebar_logout_btn", use_container_width=True):
+                    if st.button("🚪 Déconnexion", key="sidebar_logout_btn", width='stretch'):
+                        # Suppression des cookies
+                        try:
+                            cookie_manager.delete("access_token")
+                            cookie_manager.delete("refresh_token")
+                            cookie_manager.delete("user")
+                        except Exception:
+                            pass
+                        
                         st.session_state.clear()
                         st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)

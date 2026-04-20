@@ -207,11 +207,14 @@ if st.button("🔓  Se connecter", width='stretch', key="login_btn"):
                     st.session_state["projects"]     = projects
                     st.session_state["active_project"] = projects[0] if projects else None
 
-                    # PERSISTENCE via Cookies (Clés uniques requises pour éviter les erreurs de duplication)
+                    # PERSISTENCE via Cookie Unique (Évite les erreurs de duplication 'key=set')
                     try:
-                        cookie_manager.set("access_token", data["access_token"], key="set_at_login")
-                        cookie_manager.set("refresh_token", data["refresh_token"], key="set_rt_login")
-                        cookie_manager.set("user", json.dumps(data["user"]), key="set_user_login")
+                        session_data = {
+                            "access_token": data["access_token"],
+                            "refresh_token": data["refresh_token"],
+                            "user": data["user"]
+                        }
+                        cookie_manager.set("pm_chatbot_session", json.dumps(session_data), key="set_session")
                     except Exception as e:
                         print(f"Erreur Cookie : {e}")
 

@@ -10,23 +10,22 @@ from utils.cookies import cookie_manager
 FASTAPI_URL = "http://localhost:8000/api/v1"
 
 def _try_restore_session():
-    """Tente de restaurer la session depuis les cookies si non authentifié."""
+    """Tente de restaurer la session depuis le cookie unique si non authentifié."""
     if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
-        access_token = cookie_manager.get("access_token")
-        if access_token:
+        session_json = cookie_manager.get("pm_chatbot_session")
+        if session_json:
             try:
-                user_json = cookie_manager.get("user")
-                if user_json:
-                    user_data = json.loads(user_json)
-                    st.session_state["access_token"]   = access_token
-                    st.session_state["refresh_token"]  = cookie_manager.get("refresh_token")
-                    st.session_state["user"]           = user_data
-                    st.session_state["authenticated"]  = True
-                    
-                    projects = user_data.get("authorized_projects", [])
-                    st.session_state["projects"]       = projects
-                    st.session_state["active_project"] = projects[0] if projects else None
-                    return True
+                session_data = json.loads(session_json)
+                st.session_state["access_token"]   = session_data.get("access_token")
+                st.session_state["refresh_token"]  = session_data.get("refresh_token")
+                st.session_state["user"]           = session_data.get("user")
+                st.session_state["authenticated"]  = True
+                
+                user_data = session_data.get("user", {})
+                projects = user_data.get("authorized_projects", [])
+                st.session_state["projects"]       = projects
+                st.session_state["active_project"] = projects[0] if projects else None
+                return True
             except Exception:
                 pass
     return False
@@ -285,11 +284,9 @@ div[data-conv-active="1"] button {
                     
                     st.markdown('<div data-logout="1">', unsafe_allow_html=True)
                     if st.button("🚪 Déconnexion", key="sidebar_logout_btn", width='stretch'):
-                        # Suppression des cookies (Unique Keys required for .delete)
+                        # Suppression du cookie de session unique
                         try:
-                            cookie_manager.delete("access_token", key="del_at_logout")
-                            cookie_manager.delete("refresh_token", key="del_rt_logout")
-                            cookie_manager.delete("user", key="del_user_logout")
+                            cookie_manager.delete("pm_chatbot_session", key="del_session_logout")
                         except Exception:
                             pass
                         

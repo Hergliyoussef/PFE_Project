@@ -7,7 +7,7 @@ from datetime import datetime
 import uuid
 
 from db.session import get_db
-from db.models import Message as DBMessage, Conversation as DBConv
+from db.models import Message as DBMessage, Conversation as DBConv, User as DBUser
 from services.auth import get_current_user, require_authorized_role
 from services.redis_client import (
     save_message, get_history,
@@ -39,7 +39,7 @@ class ChatResponse(BaseModel):
 
 # ── LOGIQUE DE PERSISTENCE POSTGRES ───────────────────────────
 
-def _save_to_postgres(db: Session, user_id_int: int, project_id: str, question: str, answer: str, conversation_id: str):
+def _save_to_postgres(db: Session, user_id_int: int, project_id: str, project_name: str, question: str, answer: str, conversation_id: str):
     """Gère la création de la conversation et l'ajout des messages."""
     try:
         # 1. Vérifier ou créer la conversation
@@ -48,14 +48,25 @@ def _save_to_postgres(db: Session, user_id_int: int, project_id: str, question: 
             db_conv = DBConv(
                 id=conversation_id, 
                 user_id=user_id_int, 
-                title=f"Chat {project_id} - {datetime.now().strftime('%d/%m %H:%M')}"
+                title=f"Chat {project_id} - {datetime.now().strftime('%d/%m %H:%M')}",
+                project_name=project_name or project_id
             )
             db.add(db_conv)
             db.flush()
 
         # 2. Ajouter les messages
-        msg_user = DBMessage(conversation_id=conversation_id, role="user", content=question)
-        msg_ai = DBMessage(conversation_id=conversation_id, role="assistant", content=answer)
+        msg_user = DBMessage(
+            conversation_id=conversation_id, 
+            user_id=user_id_int, 
+            role="user", 
+            content=question
+        )
+        msg_ai = DBMessage(
+            conversation_id=conversation_id, 
+            user_id=user_id_int, 
+            role="assistant", 
+            content=answer
+        )
         
         db.add(msg_user)
         db.add(msg_ai)
@@ -104,7 +115,7 @@ async def chat(
         # 2. Sauvegarde hybride
         save_message(user_id_str, redis_key, "user", req.question)
         save_message(user_id_str, redis_key, "assistant", answer, intent=intent)
-        _save_to_postgres(db, user_id_int, req.project_id, req.question, answer, conv_id)
+        _save_to_postgres(db, user_id_int, req.project_id, req.project_name, req.question, answer, conv_id)
 
         # 3. Réponse
         display_type = _get_display_type(intent, req.question)

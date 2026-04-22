@@ -7,6 +7,9 @@ Authentification JWT complète :
 - Validation token sur chaque requête
 - Refresh token pour renouveler la session
 """
+from sqlalchemy.orm import Session
+from db.models import User  # Assure-toi que le chemin est correct
+from db.session import SessionLocal
 from datetime import datetime, timedelta
 from typing import Optional
 import httpx
@@ -228,19 +231,28 @@ def verify_token(token: str, token_type: str = "access") -> dict:
 async def get_current_user(
     credentials: HTTPAuthorizationCredentials = Depends(bearer_scheme),
 ) -> dict:
-    """
-    Dépendance FastAPI à injecter dans les routes protégées.
-    Extrait et valide le JWT du header Authorization: Bearer <token>
-
-    Usage dans une route :
-        @router.get("/protected")
-        async def route(user = Depends(get_current_user)):
-            return {"user": user["sub"]}
-    """
-    token   = credentials.credentials
+    token = credentials.credentials
     payload = verify_token(token, token_type="access")
-    return payload
+    
+    # --- SYNCHRONISATION AUTOMATIQUE ---
+    # On récupère les infos du token
+    user_id = payload.get("user_id")
+    username = payload.get("sub")
+    email = payload.get("email")
+    roles = payload.get("roles", [])
 
+    # On appelle la fonction de synchro (que nous avons créée ensemble)
+    # Elle vérifiera si l'ID existe, sinon elle le créera
+    sync_user_to_db({
+        "id": user_id,
+        "login": username,
+        "email": email,
+        "roles": roles,
+        "is_admin": payload.get("is_admin", False)
+    })
+    # -----------------------------------
+
+    return payload
 
 async def get_current_admin(
     current_user: dict = Depends(get_current_user),
@@ -274,3 +286,42 @@ async def require_authorized_role(
             detail      = "Accès réservé aux Chefs de Projet et CEO.",
         )
     return current_user
+def sync_user_to_db(user_data: dict):
+    """
+    Synchronise l'utilisateur Redmine avec la base de données locale.
+    Résout l'erreur ForeignKeyViolation en assurant que l'ID existe avant le chat.
+    """
+    db: Session = SessionLocal()
+    try:
+        # On vérifie si l'utilisateur existe déjà via son ID Redmine
+        db_user = db.query(User).filter(User.id == user_data["id"]).first()
+
+        # Déterminer le rôle principal pour notre DB (type user_role)
+        # On prend le rôle le plus prioritaire de la liste triée
+        primary_role = "PROJECT_MANAGER"
+        if user_data.get("is_admin"):
+            primary_role = "CEO"
+        elif user_data.get("roles"):
+            # Si le rôle 'CEO' est dans la liste Redmine, on lui donne
+            primary_role = "CEO" if "CEO" in user_data["roles"] else "PROJECT_MANAGER"
+
+        if not db_user:
+            logger.info(f"[Auth] Nouveau profil détecté : {user_data['login']}. Création locale...")
+            db_user = User(
+                id=user_data["id"],
+                username=user_data["login"],
+                email=user_data["email"],
+                role=primary_role,
+                hashed_password="redmine_external_auth" # Placeholder car auth via Redmine
+            )
+            db.add(db_user)
+        else:
+            # Mise à jour du rôle si nécessaire (synchro dynamique)
+            db_user.role = primary_role
+            
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[Auth] Échec de la synchronisation PostgreSQL : {e}")
+    finally:
+        db.close()

@@ -3,7 +3,7 @@ from pydantic import BaseModel
 from typing import Optional, List
 import logging
 from sqlalchemy.orm import Session
-from datetime import datetime
+from datetime import datetime , timedelta
 import uuid
 
 from db.session import get_db
@@ -58,7 +58,7 @@ def _save_to_postgres(db: Session, user_id_int: int, project_id: str, project_na
         msg_user = DBMessage(
             conversation_id=conversation_id, 
             user_id=user_id_int, 
-            role="user", 
+            role= "user",
             content=question
         )
         msg_ai = DBMessage(

@@ -10,8 +10,8 @@ class UserRole(str, enum.Enum):
     PROJECT_MANAGER = "PROJECT_MANAGER"
 
 class MsgRole(str, enum.Enum):
-    user = "user"
     assistant = "assistant"
+    user = "user"
 
 # 2. Table Users
 class User(Base):
@@ -48,7 +48,7 @@ class Message(Base):
     id = Column(Integer, primary_key=True, index=True)
     conversation_id = Column(String, ForeignKey("conversations.id", ondelete="CASCADE"))
     user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
-    role = Column(Enum(MsgRole, name="msg_role"), nullable=False) # Une seule fois suffit
+    role = Column(Enum(MsgRole, name="msg_role"), nullable=False)
     content = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)
 

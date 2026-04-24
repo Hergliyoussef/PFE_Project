@@ -82,25 +82,27 @@ def _delete_conversation(conv_id: str):
     except Exception as e:
         st.error(f"Erreur API : {e}")
 
-def require_login():
-    _try_restore_session()
-    if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
-        st.switch_page("pages/login.py")
-        st.stop()
-    render_sidebar()
-
-def get_active_project():
-    return st.session_state.get("active_project")
-
-def render_sidebar():
-    """Affiche le sidebar avec Top/Bottom fixés et Milieu scrollable (Version Slate Pro)."""
-    with st.sidebar:
-        st.markdown("""
+def inject_custom_css():
+    """Injecte le CSS global pour masquer le menu Streamlit et styliser l'app."""
+    st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-[data-testid="stSidebar"] { background: #0f172a !important; border-right: 1px solid rgba(255,255,255,0.05) !important; }
+
+/* Masquer le menu de navigation par défaut de Streamlit */
 [data-testid="stSidebarNav"] { display: none !important; }
-[data-testid="stSidebarUserContent"] { padding: 0 !important; height: 100vh !important; overflow: hidden !important; }
+[data-testid="stSidebar"] [data-testid="stVerticalBlock"] { gap: 0 !important; }
+#MainMenu, footer, header { visibility: hidden; height: 0; }
+.stAppHeader { display: none; }
+
+/* Fond global sidebar */
+[data-testid="stSidebar"] { background: #0f172a !important; border-right: 1px solid rgba(255,255,255,0.05) !important; }
+
+/* Masquer le scroll padding de Streamlit */
+[data-testid="stSidebarUserContent"] {
+    padding: 0 !important;
+    height: 100vh !important;
+    overflow: hidden !important;
+}
 [data-testid="stSidebarUserContent"] > div { height: 100vh !important; }
 [data-testid="stSidebarUserContent"] > div > div[data-testid="stVerticalBlock"] { display: flex !important; flex-direction: column !important; height: 100vh !important; overflow: hidden !important; gap: 0 !important; }
 
@@ -117,26 +119,17 @@ div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div
 .conv-row { margin-bottom: 6px; display: flex !important; align-items: center !important; }
 
 div[data-conv-item="1"] button, div[data-conv-active="1"] button {
-    border-top-right-radius: 0 !important; 
-    border-bottom-right-radius: 0 !important;
-    text-align: left !important; 
-    height: 40px !important; 
-    border-right: none !important; 
-    width: 100% !important;
-    font-size: 13px !important;
-    margin: 0 !important;
+    border-top-right-radius: 0 !important; border-bottom-right-radius: 0 !important;
+    text-align: left !important; height: 40px !important; border-right: none !important; width: 100% !important;
+    font-size: 13px !important; margin: 0 !important;
 }
+div[data-conv-active="1"] button { background: rgba(99,102,241,0.12) !important; border: 1px solid rgba(99,102,241,0.3) !important; color: #a5b4fc !important; }
 
 div[data-del-btn="1"] button {
-    border-top-left-radius: 0 !important; 
-    border-bottom-left-radius: 0 !important;
-    height: 40px !important; 
-    background: rgba(239, 68, 68, 0.2) !important; /* Fond rouge plus marqué */
-    color: #ef4444 !important; 
-    border: 1px solid rgba(239, 68, 68, 0.3) !important; /* Bordure rouge */
-    font-weight: bold !important; 
-    width: 100% !important; 
-    margin: 0 !important;
+    border-top-left-radius: 0 !important; border-bottom-left-radius: 0 !important;
+    height: 40px !important; background: rgba(239, 68, 68, 0.2) !important;
+    color: #ef4444 !important; border: 1px solid rgba(239, 68, 68, 0.3) !important;
+    font-weight: bold !important; width: 100% !important; margin: 0 !important;
     margin-left: -10px !important; 
 }
 div[data-del-btn="1"] button:hover { background: #ef4444 !important; color: white !important; }
@@ -146,6 +139,20 @@ div[data-conv-new="1"] button { background: linear-gradient(135deg, #6366f1 0%, 
 </style>
 """, unsafe_allow_html=True)
 
+def require_login():
+    inject_custom_css()
+    _try_restore_session()
+    if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
+        st.switch_page("pages/login.py")
+        st.stop()
+    render_sidebar()
+
+def get_active_project():
+    return st.session_state.get("active_project")
+
+def render_sidebar():
+    """Affiche le sidebar avec Top/Bottom fixés et Milieu scrollable (Version Slate Pro)."""
+    with st.sidebar:
         # 1. TOP
         with st.container():
             st.markdown('<div data-sidebar-top="1"></div>', unsafe_allow_html=True)

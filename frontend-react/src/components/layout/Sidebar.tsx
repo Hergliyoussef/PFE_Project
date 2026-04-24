@@ -1,0 +1,217 @@
+import { useState, useEffect } from "react"
+import { Button } from "@/components/ui/button"
+import { ScrollArea } from "@/components/ui/scroll-area"
+import { Separator } from "@/components/ui/separator"
+import { Plus, MessageSquare, Trash2, LogOut, User, FolderKanban, LayoutDashboard } from "lucide-react"
+import api from "@/api/api"
+import Cookies from "js-cookie"
+import { useNavigate } from "react-router-dom"
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select"
+
+interface Conversation {
+  id: string
+  title: string
+  created_at: string
+  project_id: string
+}
+
+interface Project {
+  id: number
+  name: string
+  identifier: string
+}
+
+export default function Sidebar({ 
+  activeConvId, 
+  onSelectConv, 
+  onNewChat 
+}: { 
+  activeConvId?: string, 
+  onSelectConv: (id: string) => void,
+  onNewChat: () => void 
+}) {
+  const [conversations, setConversations] = useState<Conversation[]>([])
+  const [projects, setProjects] = useState<Project[]>([])
+  const [activeProject, setActiveProject] = useState<string>("")
+  const navigate = useNavigate()
+
+  // 1. Charger les projets au montage
+  useEffect(() => {
+    const userData = localStorage.getItem("pm_user")
+    if (userData) {
+      try {
+        const user = JSON.parse(userData)
+        const userProjects = user.authorized_projects || []
+        setProjects(userProjects)
+        if (userProjects.length > 0) {
+          const defaultProj = localStorage.getItem("pm_active_project") || userProjects[0].identifier
+          setActiveProject(defaultProj)
+        }
+      } catch (e) {
+        console.error("Erreur parsing user data", e)
+      }
+    }
+  }, [])
+
+  // 2. Charger les conversations quand le projet ou l'ID actif change
+  useEffect(() => {
+    fetchConversations()
+    // On rafraîchit aussi toutes le 30s au cas où
+    const interval = setInterval(fetchConversations, 30000)
+    return () => clearInterval(interval)
+  }, [activeProject, activeConvId])
+
+  const fetchConversations = async () => {
+    try {
+      const response = await api.get("/conversations")
+      setConversations(response.data.conversations || [])
+    } catch (err) {
+      console.error("Erreur lors du chargement des conversations", err)
+    }
+  }
+
+  const handleDelete = async (e: React.MouseEvent, id: string) => {
+    e.stopPropagation()
+    if (!confirm("Supprimer cette discussion ?")) return
+    try {
+      await api.delete(`/conversations/${id}`)
+      setConversations(prev => prev.filter(c => c.id !== id))
+      if (activeConvId === id) onNewChat()
+    } catch (err) {
+      alert("Erreur lors de la suppression")
+    }
+  }
+
+  const handleLogout = () => {
+    Cookies.remove("pm_chatbot_access_token")
+    localStorage.removeItem("pm_user")
+    localStorage.removeItem("pm_active_project")
+    navigate("/login")
+  }
+
+  const handleProjectChange = (value: string) => {
+    setActiveProject(value)
+    localStorage.setItem("pm_active_project", value)
+    onNewChat()
+  }
+
+  const filteredConversations = conversations.filter(c => c.project_id === activeProject)
+
+  return (
+    <div className="w-72 h-screen bg-slate-950 border-r border-white/5 flex flex-col">
+      <div className="p-4 space-y-4">
+        <div className="flex items-center gap-2 px-2">
+          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center font-bold text-primary-foreground shadow-lg shadow-primary/20">PM</div>
+          <span className="font-bold text-slate-100 tracking-tight">Assistant IA</span>
+        </div>
+
+        <div className="px-1">
+          <Select value={activeProject} onValueChange={handleProjectChange}>
+            <SelectTrigger className="w-full bg-white/5 border-white/10 text-slate-200 h-10">
+              <div className="flex items-center gap-2 truncate">
+                <FolderKanban className="w-4 h-4 text-primary shrink-0" />
+                <SelectValue placeholder="Sélectionner un projet" />
+              </div>
+            </SelectTrigger>
+            <SelectContent className="bg-slate-900 border-white/10 text-slate-200">
+              {projects.map((proj) => (
+                <SelectItem key={proj.identifier} value={proj.identifier}>
+                  {proj.name}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+
+        <Button 
+          variant="outline" 
+          className="w-full justify-start gap-2 border-white/10 bg-primary/5 hover:bg-primary/10 text-primary border-primary/20"
+          onClick={onNewChat}
+        >
+          <Plus className="w-4 h-4" />
+          Nouvelle discussion
+        </Button>
+      </div>
+
+      <Separator className="bg-white/5" />
+
+      <div className="flex-1 overflow-hidden flex flex-col py-2">
+        <div className="px-6 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
+          Discussions récentes
+        </div>
+        <ScrollArea className="flex-1 px-3">
+          <div className="space-y-1">
+            {filteredConversations.length > 0 ? filteredConversations.map((conv) => (
+              <div
+                key={conv.id}
+                onClick={() => onSelectConv(conv.id)}
+                role="button"
+                className={`group w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all relative cursor-pointer ${
+                  activeConvId === conv.id 
+                    ? "bg-primary/10 text-primary font-medium" 
+                    : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                }`}
+              >
+                <div className="relative shrink-0">
+                  <MessageSquare className={`w-4 h-4 ${activeConvId === conv.id ? "text-primary" : "text-slate-500"}`} />
+                  {/* Petit point indicateur (l'astuce Streamlit) */}
+                  <div className={`absolute -top-1 -right-1 w-2 h-2 rounded-full border-2 border-slate-950 ${
+                    activeConvId === conv.id 
+                      ? "bg-emerald-500 shadow-[0_0_5px_#10b981] animate-pulse" 
+                      : "bg-slate-700"
+                  }`} />
+                </div>
+                <span className="truncate text-left pr-6">{conv.title || "Nouvelle discussion"}</span>
+                
+                <button
+                  onClick={(e) => handleDelete(e, conv.id)}
+                  className="absolute right-2 opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-red-500/20 hover:text-red-400 transition-all z-10"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )) : (
+              <div className="px-6 py-8 text-center text-slate-600 text-xs italic leading-relaxed">
+                Aucune discussion trouvée pour ce projet.
+              </div>
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+
+      <Separator className="bg-white/5" />
+
+      <div className="p-4 space-y-2">
+        <Button 
+          variant="ghost" 
+          className="w-full justify-start gap-3 text-slate-400 hover:text-slate-100 hover:bg-white/5 px-3 h-10"
+          onClick={() => navigate("/dashboard")}
+        >
+          <LayoutDashboard className="w-4 h-4" />
+          Tableau de Bord
+        </Button>
+        <Button 
+          variant="ghost" 
+          className="w-full justify-start gap-3 text-slate-400 hover:text-slate-100 hover:bg-white/5 px-3 h-10"
+        >
+          <User className="w-4 h-4" />
+          Mon Profil
+        </Button>
+        <Button 
+          variant="ghost" 
+          className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-500/10 px-3 h-10"
+          onClick={handleLogout}
+        >
+          <LogOut className="w-4 h-4" />
+          Déconnexion
+        </Button>
+      </div>
+    </div>
+  )
+}

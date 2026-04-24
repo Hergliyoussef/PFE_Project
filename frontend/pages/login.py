@@ -12,7 +12,7 @@ FASTAPI_URL = "http://localhost:8000/api/v1"
 
 st.set_page_config(
     page_title="PM Assistant — Connexion",
-    page_icon="🤖",
+    page_icon="🔐",
     layout="centered",
     initial_sidebar_state="collapsed",
 )

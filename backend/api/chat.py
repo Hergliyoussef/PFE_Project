@@ -292,16 +292,25 @@ async def list_conversations(
     logger.info(f"[Conversations] User {user_id_int} -> {len(result)} trouvées")
     return {"conversations": result}
 
-@router.post("/conversations/clear/{project_id}")
-async def clear_conversation_redis(
-    project_id: str,
+@router.delete("/conversations/{conversation_id}")
+async def delete_conversation(
+    conversation_id: str,
     current_user: dict = Depends(require_authorized_role),
+    db: Session = Depends(get_db)
 ):
-    # OBSOLETE : Maintenant on préfère créer une NOUVELLE conversation ID
-    user_id_str = current_user.get("sub")
+    user_id_int = current_user.get("user_id", 1)
+    
+    # Vérifier que la conversation appartient bien à l'utilisateur
+    conv = db.query(DBConv).filter(DBConv.id == conversation_id, DBConv.user_id == user_id_int).first()
+    if not conv:
+        raise HTTPException(status_code=404, detail="Conversation non trouvée ou non autorisée")
+    
     try:
-        from services.redis_client import clear_history
-        # On pourrait effacer tous les IDs liés au projet, ou rien
-        return {"message": "Démarrage forcé d'une nouvelle session", "cleared": True}
+        db.delete(conv)
+        db.commit()
+        logger.info(f"[Conversations] ID {conversation_id} supprimée par User {user_id_int}")
+        return {"message": "Conversation supprimée avec succès", "id": conversation_id}
     except Exception as e:
-        return {"message": "Erreur", "cleared": False}
+        db.rollback()
+        logger.error(f"[Conversations] Erreur suppression : {e}")
+        raise HTTPException(status_code=500, detail="Erreur lors de la suppression")

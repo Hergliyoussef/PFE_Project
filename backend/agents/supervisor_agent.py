@@ -1,14 +1,10 @@
-"""
-Superviseur — backend/agents/supervisor_agent.py
-"""
-import json
 import logging
-from typing import Literal
-
-from langgraph.graph import StateGraph, END
-from langchain_core.messages import HumanMessage, AIMessage
+from typing import Literal, Dict, Any
+from pydantic import BaseModel, Field
+from langchain_core.messages import HumanMessage
 from langchain_core.prompts import ChatPromptTemplate
-
+from langchain_core.output_parsers import PydanticOutputParser
+from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from agents.state import AgentState
 from agents.analyse_agent import analyse_node
 from agents.rapporteur_agent import rapporteur_node
@@ -16,173 +12,88 @@ from services.llm_client import get_llm
 
 logger = logging.getLogger(__name__)
 
-# ──────────────────────────────────────────────────────────────
-# Prompt NLP — Classification sémantique
-# ──────────────────────────────────────────────────────────────
-NLP_CLASSIFICATION_PROMPT = ChatPromptTemplate.from_messages([
-    ("system", """Tu es un classificateur NLP expert en gestion de projet.
-Ton rôle UNIQUE : analyser la SÉMANTIQUE de la question et la classer.
+# --- SCHÉMAS ET CONFIGURATION ---
 
-Projet actif : {project_id}
-Nom du projet: {project_name}
+class RouterDecision(BaseModel):
+    """Décision du superviseur sur l'agent à appeler."""
+    action: Literal["analyse", "rapporteur", "hors_sujet"] = Field(description="L'agent spécialisé ou hors_sujet.")
+    intent: str = Field(description="L'intention détectée.")
+    message: str = Field(default="", description="Réponse directe si hors_sujet.")
 
-═══════ RÈGLES DE CLASSIFICATION ═══════
-[hors_sujet] — Santé, météo, cuisine, sport, personnel, politique
-[clarification] — Concerne le projet mais trop vague.
-[analyse] — Demande des DONNÉES, métriques, délais, retards ou KPIs.
-[rapporteur] — Demande une SYNTHÈSE, un document ou des news générales.
+parser = PydanticOutputParser(pydantic_object=RouterDecision)
 
-FORMAT JSON STRICT :
-{{
-  "action": "hors_sujet" | "clarification" | "analyse" | "rapporteur",
-  "intent": "planning" | "risques" | "rapport" | "hors_sujet" | "general",
-  "confidence": 0.0 à 1.0,
-  "message": "réponse directe si hors_sujet, sinon vide",
-  "semantic_reason": "explication brève"
-}}"""),
-    ("human", "Question à classifier : {question}")
-])
+SYSTEM_PROMPT = """Tu es l'intelligence centrale d'un chatbot de gestion de projet.
+Ton rôle est UNIQUEMENT de choisir l'agent spécialisé (analyse, rapporteur) ou de BLOQUER le hors-sujet.
 
-def _parse_llm_response(content: str) -> dict:
-    """Parse la réponse JSON du LLM avec nettoyage robuste."""
-    content = content.strip()
-    if "```json" in content:
-        content = content.split("```json")[1].split("```")[0].strip()
-    elif "```" in content:
-        content = content.split("```")[1].split("```")[0].strip()
-    
-    start = content.find("{")
-    end = content.rfind("}") + 1
-    if start == -1 or end == 0:
-        raise ValueError("Format JSON non trouvé")
-    
-    return json.loads(content[start:end])
+RÈGLE ABSOLUE POUR HORS-SUJET : 
+Si la question ne concerne pas Redmine ou la gestion de projet, ne réponds JAMAIS à la question posée.
+Ton seul message doit être : "Je suis un assistant spécialisé uniquement dans la gestion de projet et Redmine. Je ne peux pas répondre à cette demande." """
 
-# ──────────────────────────────────────────────────────────────
-# NŒUD 1 : Superviseur NLP
-# ──────────────────────────────────────────────────────────────
-def supervisor_node(state: AgentState) -> AgentState:
+def get_router_chain():
     llm = get_llm("supervisor")
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", SYSTEM_PROMPT + "\n{format_instructions}"),
+        ("human", "Question : {question}"),
+    ]).partial(format_instructions=parser.get_format_instructions())
+    return prompt | llm | parser
 
-    # Initialisation de sécurité (évite UnboundLocalError)
-    action = "rapporteur"
-    intent = "general"
-    confidence = 1.0
-    message = ""
+# --- LOGIQUE DE ROUTAGE 100% LANGCHAIN (LCEL) ---
 
-    last_question = next(
-        (m.content for m in reversed(state.get("messages", []))
-         if isinstance(m, HumanMessage)), ""
-    )
-
-    try:
-        prompt_messages = NLP_CLASSIFICATION_PROMPT.format_messages(
-            project_id=state.get("project_id", "inconnu"),
-            project_name=state.get("project_name", "Projet"), 
-            question=last_question,
-        )
-        response = llm.invoke(prompt_messages)
-        parsed = _parse_llm_response(response.content)
-
-        action = parsed.get("action", "rapporteur")
-        intent = parsed.get("intent", "general")
-        confidence = float(parsed.get("confidence", 0.5))
-        message = parsed.get("message", "")
-
-    except Exception as e:
-        logger.warning(f"[Superviseur] Erreur parsing : {e}. Fallback rapporteur.")
-
-    # Logique de filtrage / Court-circuit
-    if action == "hors_sujet" or confidence < 0.3:
-        reply = "Je suis votre assistant de gestion de projet. Je ne peux pas répondre à ce genre de question"
+def _execute_routing(inputs: Dict[str, Any]) -> Dict[str, Any]:
+    decision = inputs["decision"]
+    state = inputs["state"]
+    
+    # On met à jour l'intention dans le state
+    state["intent"] = decision.intent
+    state["next_agent"] = decision.action
+    
+    if decision.action == "analyse":
+        return analyse_node(state)
+    elif decision.action == "rapporteur":
+        return rapporteur_node(state)
+    else:
+        # Hors-sujet : l'IA répond elle-même
         return {
             **state, 
             "next_agent": "end", 
-            "final_answer": reply, 
-            "intent": "hors_sujet",
-            "messages": state.get("messages", []) + [AIMessage(content=reply)]
+            "final_answer": decision.message or "Désolé, ce sujet n'est pas lié à la gestion de projet."
         }
 
-    return {
-        **state,
-        "next_agent": action,
-        "intent": intent
-    }
+# La chaîne maîtresse qui orchestre tout
+master_chain = (
+    RunnablePassthrough.assign(
+        decision=lambda x: get_router_chain().invoke({"question": x["last_msg"]})
+    ) 
+    | RunnableLambda(_execute_routing)
+)
 
-# ──────────────────────────────────────────────────────────────
-# ROUTAGE ET CONSTRUCTION
-# ──────────────────────────────────────────────────────────────
-def route_after_supervisor(state: AgentState) -> Literal["analyse", "rapporteur", "end"]:
-    next_agent = state.get("next_agent", "rapporteur")
-    if next_agent == "end":
-        return END
-    return next_agent if next_agent in ["analyse", "rapporteur"] else "rapporteur"
-
-def build_graph():
-    workflow = StateGraph(AgentState)
-    workflow.add_node("supervisor", supervisor_node)
-    workflow.add_node("analyse",    analyse_node)
-    workflow.add_node("rapporteur", rapporteur_node)
-
-    workflow.set_entry_point("supervisor")
-
-    workflow.add_conditional_edges(
-        "supervisor",
-        route_after_supervisor,
-        {"analyse": "analyse", "rapporteur": "rapporteur", END: END}
-    )
-
-    workflow.add_edge("analyse", END)
-    workflow.add_edge("rapporteur", END)
-
-    return workflow.compile()
-
-graph = build_graph()
-
-# ──────────────────────────────────────────────────────────────
-# POINT D'ENTRÉE — Signature synchronisée avec FastAPI
-# ──────────────────────────────────────────────────────────────
-def run_agent(question: str, project_id: str, project_name: str = "Projet", user_id: str = "chef_projet", history: list = None) -> dict:
-    """Lance le graphe avec la signature attendue par api/chat.py."""
-    messages = list(history or [])
-    messages.append(HumanMessage(content=question))
-
-    initial_state: AgentState = {
-        "messages": messages,
+def run_agent(question: str, project_id: str, user_id: str, user_role: str = "PROJECT_MANAGER", history: list = None, project_name: str = "") -> dict:
+    """Point d'entrée unique utilisant la master_chain LangChain."""
+    
+    # Initialisation du State
+    state: AgentState = {
+        "messages": list(history or []) + [HumanMessage(content=question)],
         "project_id": str(project_id),
-        "project_name": str(project_name),
+        "project_name": project_name,
         "user_id": user_id,
-        "intent": "general",
-        "next_agent": "rapporteur",
+        "user_role": user_role,
+        "next_agent": "supervisor",
         "final_answer": "",
-        "agent_result": "",
-        "agent_status": "pending",
-        "agent_error": "",
-        "retry_count": 0
+        "data": {},
+        "intent": "general",
+        "last_msg": question # Pour la chaîne
     }
 
     try:
-        result = graph.invoke(initial_state)
+        # On laisse LangChain orchestrer le flux via la master_chain
+        final_state = master_chain.invoke({"last_msg": question, "state": state})
         
-        # Récupération de la réponse filtrée ou du résultat agent
-        answer = result.get("final_answer") or result.get("agent_result") or result.get("answer")
-        
-        if not answer:
-            answer = "Désolé, je n'ai pas pu traiter votre demande concernant ce projet."
-
-        intent = result.get("intent", "general")
-        agent_used = "supervisor" if result.get("next_agent") == "end" else result.get("next_agent")
-
-        logger.info(f"[LangGraph] Résultat : intent={intent}, agent={agent_used}")
-
         return {
-            "answer": answer,
-            "intent": intent,
-            "agent_used": agent_used,
-            "project_id": str(project_id),
-            "display_type": "text" if intent == "hors_sujet" else "auto"
+            "answer": final_state.get("final_answer"),
+            "intent": final_state.get("intent"),
+            "agent_used": final_state.get("next_agent"),
+            "data": final_state.get("data", {})
         }
-
     except Exception as e:
-        logger.error(f"[LangGraph] Crash : {e}")
-        return {"answer": f"Erreur système : {e}", "intent": "error", "agent_used": "none", "project_id": str(project_id)}
+        logger.error(f"[MasterChain] Erreur : {e}")
+        return {"answer": "Erreur technique, réessayez.", "intent": "error", "agent_used": "none", "data": {}}

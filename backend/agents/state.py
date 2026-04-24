@@ -8,7 +8,7 @@ import operator
 
 class AgentState(TypedDict):
     # ── Entrées ───────────────────────────────────────────────
-    messages:    Annotated[list, operator.add]
+    messages:    list
     project_name: str
     project_id:  str
     user_id:     str

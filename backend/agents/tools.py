@@ -8,6 +8,8 @@ from datetime import date, datetime, timedelta
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from services.redmine_client import redmine
+from db.session import SessionLocal
+from db.models import Conversation as DBConv
 
 # --- OUTILS DE BASE EXISTANTS ---
 
@@ -173,13 +175,39 @@ def classify_risk(project_id: str) -> str:
 
 
 
+@tool
+def delete_project_conversations(project_id: str, user_id: int) -> str:
+    """
+    Supprime définitivement TOUTES les conversations de l'utilisateur pour un projet spécifique.
+    À utiliser uniquement si l'utilisateur demande explicitement de 'supprimer', 'effacer' ou 'nettoyer' son historique.
+    """
+    db = SessionLocal()
+    try:
+        query = db.query(DBConv).filter(
+            DBConv.user_id == user_id,
+            DBConv.id.like(f"conv_{user_id}_{project_id}_%")
+        )
+        count = query.count()
+        if count == 0:
+            return f"Aucune conversation trouvée pour le projet '{project_id}'."
+        
+        query.delete(synchronize_session=False)
+        db.commit()
+        return f"Succès : {count} conversation(s) supprimée(s) pour le projet '{project_id}'."
+    except Exception as e:
+        db.rollback()
+        return f"Erreur lors de la suppression : {str(e)}"
+    finally:
+        db.close()
+
 ALL_TOOLS = [
     get_project_metrics, get_overdue_issues, get_critical_path,
-    get_velocity_trend, get_member_performance, classify_risk
+    get_velocity_trend, get_member_performance, classify_risk,
+    delete_project_conversations
 ]
 
 ANALYSE_TOOLS = ALL_TOOLS
 DECISION_TOOLS = [get_critical_path, get_velocity_trend, classify_risk, get_member_performance]
 
 # Liste pour l'agent Rapporteur (Synthèse et métriques)
-RAPPORTEUR_TOOLS = [get_project_metrics, get_overdue_issues, get_velocity_trend, classify_risk]
+RAPPORTEUR_TOOLS = [get_project_metrics, get_overdue_issues, get_velocity_trend, classify_risk, delete_project_conversations]

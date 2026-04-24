@@ -1,111 +1,102 @@
-from langchain_core.messages import HumanMessage, SystemMessage, AIMessage
-from langgraph.prebuilt import ToolNode
-import logging, time, sys, os
-
-sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from agents.tools import ANALYSE_TOOLS
+"""
+Agent Analyse — backend/agents/analyse_agent.py
+100% LangChain — Pure LCEL + Manual Tool Loop (No LangGraph).
+"""
+import logging
+from langchain_core.messages import AIMessage, ToolMessage, SystemMessage, HumanMessage
 from agents.state import AgentState
+from agents.tools import ANALYSE_TOOLS
+from services.llm_client import get_llm
 
 logger = logging.getLogger(__name__)
 
-ANALYSE_SYSTEM = """Tu es l'Agent Analyse du projet Redmine.
+# Map des outils pour exécution manuelle
+TOOLS_MAP = {t.name: t for t in ANALYSE_TOOLS}
 
-NOM DU PROJET ACTIF : {project_name}
-ID DU PROJET ACTIF : {project_id}
+SYSTEM_TEMPLATE = """Tu es l'Agent Analyse du projet {project_id}.
+Ton utilisateur actuel est : {user_role}.
 
-IMPORTANT : Utilise TOUJOURS le nom du projet "{project_name}" dans tes phrases au lieu de son ID technique.
-NE DEMANDE JAMAIS l'identifiant du projet à l'utilisateur.
-Utilise DIRECTEMENT "{project_id}" dans tous tes appels d'outils.
+CONSIGNES :
+1. Utilise TOUJOURS project_id="{project_id}" dans tes appels d'outils.
+2. Si l'utilisateur est CEO : Priorise les vues d'ensemble, les budgets et les risques stratégiques.
+3. Si l'utilisateur est PROJECT_MANAGER : Sois précis, cite les numéros de tickets et la charge de travail.
 
-Outils disponibles (BUG 9 — liste corrigée pour correspondre à ANALYSE_TOOLS) :
-- get_project_metrics("{project_id}")    → métriques globales : avancement, retards, taux de complétion
-- get_overdue_issues("{project_id}")     → liste des tâches dont la date d'échéance est dépassée
-- get_critical_path("{project_id}")     → tâches bloquantes sur le chemin critique
-- get_velocity_trend("{project_id}")    → tendance de vélocité sur les derniers sprints
-- get_member_performance("{project_id}") → performance et efficacité par membre de l'équipe
-- classify_risk("{project_id}")          → score de risque global du projet
+Outils disponibles :
+- get_project_metrics     → avancement global, retards
+- get_overdue_issues      → tâches en retard
+- get_not_started_issues   → tâches à 0%
+- get_team_workload       → charge par membre
+- get_sprint_status       → état des sprints
+- classify_risk           → score de risque (0->1)
 
-Réponds en français avec chiffres précis + recommandations + 🔴🟡🟢
-"""
+Réponds en français avec des chiffres précis et utilise des indicateurs visuels (🔴🟡🟢)."""
 
-FALLBACK_MSG = {
+FALLBACK = {
     "planning":   "⚠️ Analyse planning indisponible. Réessayez dans 1 minute.",
     "risques":    "⚠️ Analyse risques indisponible. Réessayez dans 1 minute.",
     "ressources": "⚠️ Analyse charge indisponible. Réessayez dans 1 minute.",
-    "default":    "⚠️ Agent Analyse indisponible. Réessayez dans 1 minute.",
+    "default":    "⚠️ Agent Analyse temporairement indisponible. Réessayez.",
 }
-# --- DANS agents/analyse_agent.py ---
 
-def analyse_node(state: AgentState) -> AgentState:
-    from services.llm_client import get_llm
+def analyse_node(state: AgentState) -> dict:
+    """
+    Node LangChain pour l'analyse de données Redmine.
+    Exécution manuelle des outils pour éviter la dépendance à LangGraph.
+    """
+    project_id = state.get("project_id", "default")
+    user_role  = state.get("user_role", "PROJECT_MANAGER")
     
-    project_id = str(state.get("project_id", "Inconnu"))
-    project_name = str(state.get("project_name", f"Projet {project_id}"))
-    intent = state.get("intent", "default")
+    llm = get_llm("analyse").bind_tools(ANALYSE_TOOLS)
+    
+    # Préparation des messages (System + Historique)
+    working_messages = [
+        SystemMessage(content=SYSTEM_TEMPLATE.format(project_id=project_id, user_role=user_role))
+    ] + state["messages"]
 
-    # On récupère la dernière question utilisateur
-    last_question = next(
-        (m.content for m in reversed(state["messages"]) if isinstance(m, HumanMessage)), 
-        ""
-    )
-
-    for attempt in range(3):
-        try:
-            llm = get_llm("analyse")
-            llm_with_tools = llm.bind_tools(ANALYSE_TOOLS)
-            tool_node = ToolNode(ANALYSE_TOOLS)
-
-            # 📋 Construction du contexte de l'agent
-            messages = [
-                SystemMessage(content=ANALYSE_SYSTEM.format(
-                    project_id=project_id,
-                    project_name=project_name
-                )),
-                HumanMessage(content=(
-                    f"CONTEXTE PROJET : {project_name} (ID: {project_id})\n"
-                    f"INTENTION : {intent}\n"
-                    f"QUESTION : {last_question}"
-                )),
-            ]
-
-            # 🔄 Boucle de Raisonnement (ReAct)
-            for step in range(6):
-                response = llm_with_tools.invoke(messages)
+    try:
+        # Boucle ReAct manuelle
+        for i in range(6):
+            response = llm.invoke(working_messages)
+            working_messages.append(response)
+            
+            if not response.tool_calls:
+                break
                 
-                # Si l'agent décide d'utiliser un outil
-                if response.tool_calls:
-                    # LOG DE DEBUG : Voir quel outil l'IA choisit
-                    for call in response.tool_calls:
-                        logger.info(f"🛠️ Agent Analyse utilise : {call['name']} avec {call['args']}")
-                    
-                    messages.append(response)
-                    tool_results = tool_node.invoke({"messages": messages})
-                    messages.extend(tool_results["messages"])
+            logger.info(f"[Analyse] Appel outils : {[t['name'] for t in response.tool_calls]}")
+            
+            for tool_call in response.tool_calls:
+                tool = TOOLS_MAP.get(tool_call["name"])
+                if tool:
+                    result = tool.invoke(tool_call["args"])
+                    working_messages.append(ToolMessage(
+                        content=str(result), 
+                        tool_call_id=tool_call["id"],
+                        name=tool_call["name"]
+                    ))
                 else:
-                    # L'IA a fini de réfléchir, elle donne sa réponse finale
-                    messages.append(response)
-                    break
+                    working_messages.append(ToolMessage(
+                        content=f"Erreur : Outil {tool_call['name']} non trouvé.",
+                        tool_call_id=tool_call["id"]
+                    ))
 
-            final_answer = messages[-1].content or "Désolé, je n'ai pas pu formuler de réponse."
+        final_content = working_messages[-1].content
+        if not final_content:
+            # Si le dernier message est un appel d'outil sans réponse texte, on force une synthèse
+            final_content = "Voici les données collectées pour votre analyse."
 
-            return {
-                **state,
-                "agent_result": final_answer,
-                "final_answer": final_answer,
-                "agent_status": "success",
-                "messages": state["messages"] + [AIMessage(content=final_answer)],
-            }
+        return {
+            **state,
+            "final_answer": final_content,
+            "agent_status": "success",
+            "messages": state["messages"] + [AIMessage(content=final_content)]
+        }
 
-        except Exception as e:
-            logger.error(f"❌ Erreur tentative {attempt+1} : {str(e)}")
-            if attempt < 2: time.sleep(2)
-            continue
-
-    # 🚨 FALLBACK
-    fallback = FALLBACK_MSG.get(intent, FALLBACK_MSG["default"])
-    return {
-        **state,
-        "final_answer": fallback,
-        "agent_status": "error",
-        "messages": state["messages"] + [AIMessage(content=fallback)],
-    }
+    except Exception as e:
+        logger.error(f"[Analyse] Erreur : {e}")
+        err_msg = FALLBACK.get(state.get("intent", "default"), FALLBACK["default"])
+        return {
+            **state,
+            "final_answer": err_msg,
+            "agent_status": "error",
+            "messages": state["messages"] + [AIMessage(content=err_msg)]
+        }

@@ -66,11 +66,24 @@ def _new_conversation():
     st.session_state["refresh_conversations"] = True
     st.rerun()
 
+def _delete_conversation(conv_id: str):
+    """Supprime une conversation spécifique via l'API."""
+    try:
+        resp = requests.delete(f"{FASTAPI_URL}/conversations/{conv_id}", headers=_get_headers(), timeout=5)
+        if resp.status_code == 200:
+            if st.session_state.get("active_conv_id") == conv_id:
+                st.session_state["active_conv_id"] = None
+                st.session_state.messages = []
+                st.session_state["is_new_session"] = True
+            st.session_state["refresh_conversations"] = True
+            st.rerun()
+        else:
+            st.error("Impossible de supprimer la conversation.")
+    except Exception as e:
+        st.error(f"Erreur API : {e}")
+
 def require_login():
-    # 1. Tentative de restauration auto via cookies si besoin
     _try_restore_session()
-    
-    # 2. Vérification finale
     if "authenticated" not in st.session_state or not st.session_state["authenticated"]:
         st.switch_page("pages/login.py")
         st.stop()
@@ -82,164 +95,67 @@ def get_active_project():
 def render_sidebar():
     """Affiche le sidebar avec Top/Bottom fixés et Milieu scrollable (Version Slate Pro)."""
     with st.sidebar:
-        # CSS Premium Slate Pro (Fixed Layout)
         st.markdown("""
 <style>
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
-
-/* Fond global sidebar Slate/Deep Blue */
-[data-testid="stSidebar"] {
-    background: #0f172a !important;
-    border-right: 1px solid rgba(255,255,255,0.05) !important;
-}
+[data-testid="stSidebar"] { background: #0f172a !important; border-right: 1px solid rgba(255,255,255,0.05) !important; }
 [data-testid="stSidebarNav"] { display: none !important; }
+[data-testid="stSidebarUserContent"] { padding: 0 !important; height: 100vh !important; overflow: hidden !important; }
+[data-testid="stSidebarUserContent"] > div { height: 100vh !important; }
+[data-testid="stSidebarUserContent"] > div > div[data-testid="stVerticalBlock"] { display: flex !important; flex-direction: column !important; height: 100vh !important; overflow: hidden !important; gap: 0 !important; }
 
-/* Masquer le scroll padding de Streamlit */
-[data-testid="stSidebarUserContent"] {
-    padding: 0 !important;
-    height: 100vh !important;
-    overflow: hidden !important;
-}
+/* Section Header Fixed */
+div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-top="1"]) { flex-shrink: 0 !important; padding: 1rem 1rem 8px 1rem !important; border-bottom: 1px solid rgba(255,255,255,0.05) !important; z-index: 10; }
 
-/* Forcer le conteneur principal en Flexbox 100vh */
-[data-testid="stSidebarUserContent"] > div {
-    height: 100vh !important;
-}
-[data-testid="stSidebarUserContent"] > div > div[data-testid="stVerticalBlock"] {
-    display: flex !important;
-    flex-direction: column !important;
-    height: 100vh !important;
-    overflow: hidden !important; 
-    gap: 0 !important;
-}
+/* Section Middle Scrollable */
+div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-middle="1"]) { flex-grow: 1 !important; overflow-y: auto !important; overflow-x: hidden !important; padding: 8px 1rem !important; scrollbar-width: thin; scrollbar-color: rgba(99,102,241,0.2) transparent; }
 
-/* --- SECTION HAUT (HEADER) --- */
-div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-top="1"]) {
-    flex-shrink: 0 !important;
-    padding: 1rem 1rem 8px 1rem !important;
-    border-bottom: 1px solid rgba(255,255,255,0.05) !important;
-    z-index: 10;
-}
+/* Section Bottom Fixed */
+div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-bottom="1"]) { flex-shrink: 0 !important; margin-top: auto !important; padding: 8px 1rem 1rem 1rem !important; border-top: 1px solid rgba(255,255,255,0.05) !important; z-index: 10; }
 
-/* --- SECTION MILIEU (SCROLLABLE) --- */
-div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-middle="1"]) {
-    flex-grow: 1 !important;
-    overflow-y: auto !important; 
-    overflow-x: hidden !important;
-    padding: 8px 1rem !important;
-    scrollbar-width: thin;
-    scrollbar-color: rgba(99,102,241,0.2) transparent;
-}
-/* Style Scrollbar */
-div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-middle="1"])::-webkit-scrollbar {
-    width: 5px;
-}
-div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-middle="1"])::-webkit-scrollbar-thumb {
-    background: rgba(99,102,241,0.15);
-    border-radius: 10px;
-}
+/* Fusion visuelle des boutons (Welded Buttons) */
+.conv-row { margin-bottom: 6px; display: flex !important; align-items: center !important; }
 
-/* --- SECTION BAS (FOOTER) --- */
-div[data-testid="stSidebarUserContent"] div[data-testid="stVerticalBlock"] > div:has(div[data-sidebar-bottom="1"]) {
-    flex-shrink: 0 !important;
-    margin-top: auto !important;
-    padding: 8px 1rem 1rem 1rem !important;
-    border-top: 1px solid rgba(255,255,255,0.05) !important;
-    z-index: 10;
-}
-
-/* Force zero gaps in sidebar blocks */
-[data-testid="stSidebar"] [data-testid="stVerticalBlock"] {
-    gap: 0 !important;
-}
-
-/* Remove Streamlit default top padding from sidebar section */
-[data-testid="stSidebar"] section {
-    padding-top: 0 !important;
-}
-
-/* Boutons & Composants */
-div[data-conv-new="1"] button {
-    background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important;
-    color: #fff !important;
-    border: none !important;
-    border-radius: 10px !important;
-    font-weight: 700 !important;
-    font-size: 14px !important;
-    padding: 12px 16px !important;
-    box-shadow: 0 4px 12px rgba(99,102,241,0.3);
-    transition: all 0.2s ease;
-}
-div[data-conv-new="1"] button:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 6px 16px rgba(99,102,241,0.4);
-}
 div[data-conv-item="1"] button, div[data-conv-active="1"] button {
-    text-align: left !important;
-    border-radius: 9px !important;
-    padding: 10px 12px !important;
+    border-top-right-radius: 0 !important; 
+    border-bottom-right-radius: 0 !important;
+    text-align: left !important; 
+    height: 40px !important; 
+    border-right: none !important; 
+    width: 100% !important;
     font-size: 13px !important;
-    border: 1px solid transparent !important;
-    transition: all 0.15s ease;
+    margin: 0 !important;
 }
-div[data-conv-item="1"] button:hover {
-    background: rgba(255,255,255,0.04) !important;
+
+div[data-del-btn="1"] button {
+    border-top-left-radius: 0 !important; 
+    border-bottom-left-radius: 0 !important;
+    height: 40px !important; 
+    background: rgba(239, 68, 68, 0.2) !important; /* Fond rouge plus marqué */
+    color: #ef4444 !important; 
+    border: 1px solid rgba(239, 68, 68, 0.3) !important; /* Bordure rouge */
+    font-weight: bold !important; 
+    width: 100% !important; 
+    margin: 0 !important;
+    margin-left: -10px !important; 
 }
-div[data-conv-active="1"] button {
-    background: rgba(99,102,241,0.12) !important;
-    border: 1px solid rgba(99,102,241,0.3) !important;
-    color: #a5b4fc !important;
-}
-.stExpander {
-    background: rgba(255,255,255,0.02) !important;
-    border: 1px solid rgba(255,255,255,0.07) !important;
-    border-radius: 12px !important;
-}
-[data-logout="1"] button {
-    background: rgba(239,68,68,0.1) !important;
-    border: 1px solid rgba(239,68,68,0.15) !important;
-    color: #fca5a5 !important;
-    font-size: 12px !important;
-}
+div[data-del-btn="1"] button:hover { background: #ef4444 !important; color: white !important; }
+
+div[data-conv-new="1"] button { background: linear-gradient(135deg, #6366f1 0%, #8b5cf6 100%) !important; color: #fff !important; border: none !important; border-radius: 10px !important; font-weight: 700 !important; padding: 12px 16px !important; box-shadow: 0 4px 12px rgba(99,102,241,0.3); }
+[data-logout="1"] button { background: rgba(239,68,68,0.1) !important; border: 1px solid rgba(239,68,68,0.15) !important; color: #fca5a5 !important; font-size: 12px !important; }
 </style>
 """, unsafe_allow_html=True)
 
-        # ── 1. HAUT (FIXÉ) ──────────────────────────────────────────
+        # 1. TOP
         with st.container():
             st.markdown('<div data-sidebar-top="1"></div>', unsafe_allow_html=True)
-            st.markdown("""
-<div style="text-align:center; padding-bottom:15px;">
-<div style="font-size:20px; margin-bottom:4px;">🤖</div>
-<div style="font-size:20px; font-weight:800; color:#818cf8;">PM Assistant</div>
-</div>
-""", unsafe_allow_html=True)
-
+            st.markdown('<div style="text-align:center; padding-bottom:15px;"><div style="font-size:20px;">🤖</div><div style="font-size:20px; font-weight:800; color:#818cf8;">PM Assistant</div></div>', unsafe_allow_html=True)
             st.markdown('<div data-conv-new="1">', unsafe_allow_html=True)
             if st.button("💬  Nouvelle conversation", key="new_conv_btn", width='stretch'):
                 _new_conversation()
             st.markdown("</div>", unsafe_allow_html=True)
 
-            if "projects" in st.session_state and st.session_state["projects"]:
-                project_names = [p["name"] for p in st.session_state["projects"]]
-                if "active_project" not in st.session_state:
-                    st.session_state["active_project"] = st.session_state["projects"][0]
-                current_proj = st.session_state["active_project"]
-                current_index = 0
-                try: current_index = project_names.index(current_proj["name"])
-                except: pass
-
-                def on_project_change():
-                    new_name = st.session_state["project_selector_sidebar"]
-                    new_proj = next(p for p in st.session_state["projects"] if p["name"] == new_name)
-                    st.session_state["active_project"] = new_proj
-                    st.session_state["active_conv_id"] = None
-                    st.session_state.messages = []
-                    st.session_state["refresh_conversations"] = True
-
-                st.markdown('<div style="font-size:9px; color:#475569; font-weight:700; margin:15px 0 5px 0;">📁 PROJET ACTIF</div>', unsafe_allow_html=True)
-                st.selectbox("P", options=project_names, index=current_index, key="project_selector_sidebar", on_change=on_project_change, label_visibility="collapsed")
-
-        # ── 2. MILIEU (SCROLLABLE) ──────────────────────────────────
+        # 2. MIDDLE (SCROLLABLE)
         with st.container():
             st.markdown('<div data-sidebar-middle="1"></div>', unsafe_allow_html=True)
             st.markdown('<div style="margin-top:10px; font-size:10px; color:#475569; font-weight:700;">💬 DISCUSSIONS RÉCENTES</div>', unsafe_allow_html=True)
@@ -255,16 +171,25 @@ div[data-conv-active="1"] button {
                     attr = 'data-conv-active="1"' if is_active else 'data-conv-item="1"'
                     try: c_date = datetime.fromisoformat(conv["created_at"].replace("Z", "+00:00")).strftime("%d/%m")
                     except: c_date = "--/--"
-                    label = f"{'🟢' if is_active else '⚫'} {c_date} - {conv['title'][:25]}"
-                    
-                    st.markdown(f'<div {attr}>', unsafe_allow_html=True)
-                    if st.button(label, key=f"conv_btn_{conv['id']}", width='stretch'):
-                        _select_conversation(conv)
+                    label = f"{'🟢' if is_active else '⚫'} {c_date} - {conv['title'][:20]}"
+
+                    st.markdown('<div class="conv-row">', unsafe_allow_html=True)
+                    cols = st.columns([0.85, 0.15], gap="small")
+                    with cols[0]:
+                        st.markdown(f'<div {attr}>', unsafe_allow_html=True)
+                        if st.button(label, key=f"conv_btn_{conv['id']}", width='stretch'):
+                            _select_conversation(conv)
+                        st.markdown("</div>", unsafe_allow_html=True)
+                    with cols[1]:
+                        st.markdown('<div data-del-btn="1">', unsafe_allow_html=True)
+                        if st.button("✕", key=f"del_btn_{conv['id']}", help="Supprimer"):
+                            _delete_conversation(conv["id"])
+                        st.markdown("</div>", unsafe_allow_html=True)
                     st.markdown("</div>", unsafe_allow_html=True)
             else:
                 st.info("Aucune discussion.")
 
-        # ── 3. BAS (FIXÉ) ───────────────────────────────────────────
+        # 3. BOTTOM
         if "user" in st.session_state:
             with st.container():
                 st.markdown('<div data-sidebar-bottom="1"></div>', unsafe_allow_html=True)
@@ -272,24 +197,12 @@ div[data-conv-active="1"] button {
                 fn, ln = user.get("firstname", ""), user.get("lastname", "")
                 full_name = f"{fn} {ln}".strip() or "Utilisateur"
                 initials  = (fn[:1] + ln[:1]).upper() if fn and ln else "U"
-                role      = user.get("roles", ["Utilisateur"])[0]
-
                 with st.expander(f"👤 {initials} - {full_name}"):
-                    st.markdown(f"""
-                    <div style="font-size:12px; color:#94a3b8; margin-bottom:25px; line-height:1.6;">
-                    <b>Identifiant :</b> {user.get('login')}<br>
-                    <b>Rôle :</b> {role}
-                    </div>
-                    """, unsafe_allow_html=True)
-                    
+                    st.markdown(f'<div style="font-size:12px; color:#94a3b8; margin-bottom:25px; line-height:1.6;"><b>Identifiant :</b> {user.get("login")}<br><b>Rôle :</b> {user.get("roles", ["Utilisateur"])[0]}</div>', unsafe_allow_html=True)
                     st.markdown('<div data-logout="1">', unsafe_allow_html=True)
                     if st.button("🚪 Déconnexion", key="sidebar_logout_btn", width='stretch'):
-                        # Suppression du cookie de session unique
-                        try:
-                            cookie_manager.delete("pm_chatbot_session", key="del_session_logout")
-                        except Exception:
-                            pass
-                        
+                        try: cookie_manager.delete("pm_chatbot_session", key="del_session_logout")
+                        except Exception: pass
                         st.session_state.clear()
                         st.rerun()
                     st.markdown("</div>", unsafe_allow_html=True)

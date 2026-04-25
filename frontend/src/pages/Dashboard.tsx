@@ -8,7 +8,6 @@ import {
   CheckCircle2, 
   TrendingUp,
   ChevronLeft,
-  Calendar,
   Activity,
   FolderKanban,
   Zap
@@ -30,7 +29,6 @@ import { useNavigate } from "react-router-dom"
 export default function Dashboard() {
   const [metrics, setMetrics] = useState<any>(null)
   const [projectsCount, setProjectsCount] = useState(0)
-  const [loading, setLoading] = useState(true)
   const navigate = useNavigate()
 
   useEffect(() => {
@@ -52,7 +50,7 @@ export default function Dashboard() {
     } catch (e) {
       console.error("Erreur metrics", e)
     } finally {
-      setLoading(false)
+      // Fin du chargement
     }
   }
 
@@ -199,7 +197,7 @@ function CardStats({ title, value, icon, trend, color }: any) {
     <div className="bg-white/[0.03] backdrop-blur-xl border border-white/5 p-7 rounded-[28px] space-y-6 hover:border-white/10 transition-all group relative overflow-hidden shadow-xl">
       <div className="flex items-center justify-between relative z-10">
         <div className={`w-12 h-12 rounded-2xl flex items-center justify-center ${colors[color]} border shadow-inner transition-transform group-hover:scale-110`}>
-          {React.cloneElement(icon as React.ReactElement, { className: "w-6 h-6", strokeWidth: 2.5 })}
+          {React.cloneElement(icon as React.ReactElement<any>, { className: "w-6 h-6", strokeWidth: 2.5 })}
         </div>
         <div className={`text-[10px] font-black ${color === 'red' || color === 'orange' ? 'text-rose-400 bg-rose-400/10' : 'text-emerald-400 bg-emerald-400/10'} px-2.5 py-1.5 rounded-xl flex items-center gap-1 shadow-sm`}>
           <TrendingUp className="w-3 h-3" />

@@ -1,7 +1,7 @@
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { useNavigate } from "react-router-dom"
-import { LayoutDashboard, MessageSquare, ShieldAlert, Zap } from "lucide-react"
+import { LayoutDashboard, MessageSquare, Zap } from "lucide-react"
 
 export default function Home() {
   const navigate = useNavigate()

@@ -1,7 +1,11 @@
 import axios from "axios"
 import Cookies from "js-cookie"
 
-const API_BASE_URL = "http://localhost:8000/api/v1"
+// En développement local: http://localhost:8000/api/v1
+// En production Docker: /api/v1 (proxy par Nginx)
+const API_BASE_URL = import.meta.env.DEV 
+  ? "http://localhost:8000/api/v1" 
+  : "/api/v1"
 
 const api = axios.create({
   baseURL: API_BASE_URL,

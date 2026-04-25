@@ -20,16 +20,16 @@ class Settings(BaseSettings):
     llm_fallback:    str = "openai/gpt-oss-120b:free"
 
     # ── Redmine ───────────────────────────────────────────────
-    redmine_url:     str = "http://localhost:3000"
+    redmine_url:     str = "http://redmine:3000"
     redmine_api_key: str = ""
     
     # ── Redis ────────────────────────────────────────────────
-    redis_host:     str = "localhost"
+    redis_host:     str = "redis"
     redis_port:     int = 6379
     redis_password: str = ""
 
     # ── PostgreSQL ────────────────────────────────────────────
-    database_url: str = "postgresql://postgres:pfe_password_2026@localhost:5432/pm_chatbot"
+    database_url: str = "postgresql://postgres:pfe_password_2026@db:5432/pm_chatbot"
     # ── App ───────────────────────────────────────────────────
     app_name:   str  = "PM Assistant - Youssef"
     secret_key: str  = "pmassistant_secret_key_2024"

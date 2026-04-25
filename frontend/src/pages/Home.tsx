@@ -56,7 +56,7 @@ export default function Home() {
 
       {/* Footer */}
       <footer className="py-12 border-t border-white/5 text-center text-sm text-slate-500">
-        <p>PM Assistant Chatbot PFE — 2024. Optimisé pour Redmine.</p>
+        <p>PM Assistant Chatbot PFE — 2026. Optimisé pour Redmine.</p>
       </footer>
     </div>
   )

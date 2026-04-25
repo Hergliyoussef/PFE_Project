@@ -62,6 +62,39 @@ services:
       - pfe-network
     restart: always
 
+  # --- 5. Backend (FastAPI) ---
+  backend:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    container_name: pm_backend
+    ports:
+      - "8000:8000"
+    environment:
+      - DATABASE_URL=postgresql://postgres:pfe_password_2026@db:5432/pm_chatbot
+      - REDIS_URL=redis://redis:6379/0
+      - REDMINE_URL=http://redmine:3000
+    depends_on:
+      - db
+      - redis
+      - redmine
+    networks:
+      - pfe-network
+    restart: always
+
+  # --- 6. Frontend (React + Nginx) ---
+  frontend:
+    build:
+      context: ./frontend
+    container_name: pm_frontend
+    ports:
+      - "80:80"
+    depends_on:
+      - backend
+    networks:
+      - pfe-network
+    restart: always
+
 # --- DÉFINITIONS GLOBALES ---
 networks:
   pfe-network:

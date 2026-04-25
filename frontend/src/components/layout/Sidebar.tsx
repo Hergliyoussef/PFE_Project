@@ -2,7 +2,7 @@ import { useState, useEffect } from "react"
 import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
-import { Plus, MessageSquare, Trash2, LogOut, User, FolderKanban, LayoutDashboard } from "lucide-react"
+import { Plus, MessageSquare, Trash2, LogOut, User, FolderKanban, LayoutDashboard, ShieldCheck } from "lucide-react"
 import api from "@/api/api"
 import Cookies from "js-cookie"
 import { useNavigate } from "react-router-dom"
@@ -13,6 +13,7 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select"
+import { Avatar, AvatarFallback } from "@/components/ui/avatar"
 
 interface Conversation {
   id: string
@@ -27,6 +28,14 @@ interface Project {
   identifier: string
 }
 
+interface UserData {
+  firstname: string
+  lastname: string
+  roles?: string[]
+  role?: string
+  login: string
+}
+
 export default function Sidebar({ 
   activeConvId, 
   onSelectConv, 
@@ -39,15 +48,17 @@ export default function Sidebar({
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [projects, setProjects] = useState<Project[]>([])
   const [activeProject, setActiveProject] = useState<string>("")
+  const [user, setUser] = useState<UserData | null>(null)
   const navigate = useNavigate()
 
-  // 1. Charger les projets au montage
   useEffect(() => {
-    const userData = localStorage.getItem("pm_user")
-    if (userData) {
+    const userDataStr = localStorage.getItem("pm_user")
+    if (userDataStr) {
       try {
-        const user = JSON.parse(userData)
-        const userProjects = user.authorized_projects || []
+        const userData = JSON.parse(userDataStr)
+        console.log("DEBUG USER DATA:", userData)
+        setUser(userData)
+        const userProjects = userData.authorized_projects || []
         setProjects(userProjects)
         if (userProjects.length > 0) {
           const defaultProj = localStorage.getItem("pm_active_project") || userProjects[0].identifier
@@ -59,10 +70,8 @@ export default function Sidebar({
     }
   }, [])
 
-  // 2. Charger les conversations quand le projet ou l'ID actif change
   useEffect(() => {
     fetchConversations()
-    // On rafraîchit aussi toutes le 30s au cas où
     const interval = setInterval(fetchConversations, 30000)
     return () => clearInterval(interval)
   }, [activeProject, activeConvId])
@@ -103,19 +112,30 @@ export default function Sidebar({
 
   const filteredConversations = conversations.filter(c => c.project_id === activeProject)
 
+  // Détection ultra-robuste du rôle CEO
+  const checkIsCEO = () => {
+    if (!user) return false;
+    const hasCeoInList = user.roles?.some(r => r.toUpperCase().includes("CEO"));
+    const hasCeoInField = user.role?.toUpperCase().includes("CEO");
+    return !!(hasCeoInList || hasCeoInField);
+  }
+
+  const isCEO = checkIsCEO();
+
   return (
-    <div className="w-72 h-screen bg-slate-950 border-r border-white/5 flex flex-col">
+    <div className="w-72 h-screen bg-[#0b0f1a] border-r border-white/5 flex flex-col">
+      {/* Header & Projects */}
       <div className="p-4 space-y-4">
         <div className="flex items-center gap-2 px-2">
           <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center font-bold text-primary-foreground shadow-lg shadow-primary/20">PM</div>
-          <span className="font-bold text-slate-100 tracking-tight">Assistant IA</span>
+          <span className="font-bold text-slate-100 tracking-tight">Chatbot IA d'Assistance à la Gestion de Projet</span>
         </div>
 
         <div className="px-1">
           <Select value={activeProject} onValueChange={handleProjectChange}>
             <SelectTrigger className="w-full bg-white/5 border-white/10 text-slate-200 h-10">
               <div className="flex items-center gap-2 truncate">
-                <FolderKanban className="w-4 h-4 text-primary shrink-0" />
+                <FolderKanban className="w-4 h-4 text-primary shrink-0" strokeWidth={2.5} />
                 <SelectValue placeholder="Sélectionner un projet" />
               </div>
             </SelectTrigger>
@@ -131,16 +151,17 @@ export default function Sidebar({
 
         <Button 
           variant="outline" 
-          className="w-full justify-start gap-2 border-white/10 bg-primary/5 hover:bg-primary/10 text-primary border-primary/20"
+          className="w-full justify-start gap-2 border-white/10 bg-primary/5 hover:bg-primary/10 text-primary border-primary/20 font-bold"
           onClick={onNewChat}
         >
-          <Plus className="w-4 h-4" />
+          <Plus className="w-4 h-4" strokeWidth={2.5} />
           Nouvelle discussion
         </Button>
       </div>
 
       <Separator className="bg-white/5" />
 
+      {/* History */}
       <div className="flex-1 overflow-hidden flex flex-col py-2">
         <div className="px-6 py-2 text-[10px] font-bold text-slate-500 uppercase tracking-widest">
           Discussions récentes
@@ -154,13 +175,12 @@ export default function Sidebar({
                 role="button"
                 className={`group w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all relative cursor-pointer ${
                   activeConvId === conv.id 
-                    ? "bg-primary/10 text-primary font-medium" 
+                    ? "bg-primary/10 text-primary font-bold" 
                     : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
                 }`}
               >
                 <div className="relative shrink-0">
-                  <MessageSquare className={`w-4 h-4 ${activeConvId === conv.id ? "text-primary" : "text-slate-500"}`} />
-                  {/* Petit point indicateur (l'astuce Streamlit) */}
+                  <MessageSquare className={`w-4 h-4 ${activeConvId === conv.id ? "text-primary" : "text-slate-500"}`} strokeWidth={2.5} />
                   <div className={`absolute -top-1 -right-1 w-2 h-2 rounded-full border-2 border-slate-950 ${
                     activeConvId === conv.id 
                       ? "bg-emerald-500 shadow-[0_0_5px_#10b981] animate-pulse" 
@@ -173,12 +193,12 @@ export default function Sidebar({
                   onClick={(e) => handleDelete(e, conv.id)}
                   className="absolute right-2 opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-red-500/20 hover:text-red-400 transition-all z-10"
                 >
-                  <Trash2 className="w-3.5 h-3.5" />
+                  <Trash2 className="w-3.5 h-3.5" strokeWidth={2.5} />
                 </button>
               </div>
             )) : (
               <div className="px-6 py-8 text-center text-slate-600 text-xs italic leading-relaxed">
-                Aucune discussion trouvée pour ce projet.
+                Aucune discussion trouvée.
               </div>
             )}
           </div>
@@ -187,30 +207,48 @@ export default function Sidebar({
 
       <Separator className="bg-white/5" />
 
-      <div className="p-4 space-y-2">
-        <Button 
-          variant="ghost" 
-          className="w-full justify-start gap-3 text-slate-400 hover:text-slate-100 hover:bg-white/5 px-3 h-10"
-          onClick={() => navigate("/dashboard")}
-        >
-          <LayoutDashboard className="w-4 h-4" />
-          Tableau de Bord
-        </Button>
-        <Button 
-          variant="ghost" 
-          className="w-full justify-start gap-3 text-slate-400 hover:text-slate-100 hover:bg-white/5 px-3 h-10"
-        >
-          <User className="w-4 h-4" />
-          Mon Profil
-        </Button>
-        <Button 
-          variant="ghost" 
-          className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-500/10 px-3 h-10"
-          onClick={handleLogout}
-        >
-          <LogOut className="w-4 h-4" />
-          Déconnexion
-        </Button>
+      {/* Footer Navigation & Profile */}
+      <div className="p-4 space-y-4">
+        <div className="space-y-1">
+          <Button 
+            variant="ghost" 
+            className="w-full justify-start gap-3 text-slate-400 hover:text-slate-100 hover:bg-white/5 px-3 h-10 font-bold"
+            onClick={() => navigate("/dashboard")}
+          >
+            <LayoutDashboard className="w-4 h-4" strokeWidth={2.5} />
+            Tableau de Bord
+          </Button>
+          <Button 
+            variant="ghost" 
+            className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-500/10 px-3 h-10 font-bold"
+            onClick={handleLogout}
+          >
+            <LogOut className="w-4 h-4" strokeWidth={2.5} />
+            Déconnexion
+          </Button>
+        </div>
+
+        {/* User Profile Block */}
+        {user && (
+          <div className="bg-white/5 border border-white/10 rounded-2xl p-3 flex items-center gap-3">
+            <Avatar className="w-10 h-10 border border-white/10">
+              <AvatarFallback className="bg-primary/20 text-primary font-bold text-xs uppercase">
+                {user.firstname?.[0]}{user.lastname?.[0]}
+              </AvatarFallback>
+            </Avatar>
+            <div className="flex-1 overflow-hidden">
+              <div className="text-xs font-bold text-slate-100 truncate">
+                {user.firstname} {user.lastname}
+              </div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <ShieldCheck className={`w-3.5 h-3.5 ${isCEO ? "text-primary" : "text-slate-500"}`} strokeWidth={2.5} />
+                <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">
+                  {isCEO ? "CEO" : "Project Manager"}
+                </span>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </div>
   )

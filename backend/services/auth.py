@@ -80,6 +80,7 @@ async def authenticate_with_redmine(login: str, password: str) -> Optional[dict]
             return None
 
         user = response.json().get("user", {})
+        logger.info(f"[Auth] Données Redmine reçues pour {login} : {user}")
         is_admin = user.get("admin", False)
 
         # ── Extraction des rôles et projets autorisés ──────────────────────
@@ -125,6 +126,23 @@ async def authenticate_with_redmine(login: str, password: str) -> Optional[dict]
             )
             return {"role_denied": True, "roles": sorted(user_roles)}
 
+        # ── Récupération forcée de l'email via Clé API Admin si manquant ──
+        email = user.get("mail") or user.get("email")
+        if not email and settings.redmine_api_key:
+            try:
+                async with httpx.AsyncClient(timeout=5) as admin_client:
+                    admin_resp = await admin_client.get(
+                        f"{settings.redmine_url}/users/{user.get('id')}.json",
+                        headers={"X-Redmine-API-Key": settings.redmine_api_key}
+                    )
+                    if admin_resp.status_code == 200:
+                        full_user = admin_resp.json().get("user", {})
+                        email = full_user.get("mail") or full_user.get("email")
+                        if email:
+                            logger.info(f"[Auth] Email récupéré via Admin API pour {login} : {email}")
+            except Exception as e:
+                logger.error(f"[Auth] Échec récupération email via Admin API : {e}")
+
         # ── Priorisation du rôle (pour l'affichage) ─────────────────
         sorted_roles = sorted(
             list(user_roles),
@@ -138,7 +156,7 @@ async def authenticate_with_redmine(login: str, password: str) -> Optional[dict]
             "login":     user.get("login"),
             "firstname": user.get("firstname", ""),
             "lastname":  user.get("lastname", ""),
-            "email":     user.get("mail", ""),
+            "email":     email,
             "is_admin":  is_admin,
             "api_key":   user.get("api_key", ""),
             "roles":     sorted_roles,   # Le premier est le plus prioritaire
@@ -310,18 +328,42 @@ def sync_user_to_db(user_data: dict):
             db_user = User(
                 id=user_data["id"],
                 username=user_data["login"],
-                email=user_data["email"],
+                email=user_data.get("email") if user_data.get("email") else None,
                 role=primary_role,
                 hashed_password="redmine_external_auth" # Placeholder car auth via Redmine
             )
             db.add(db_user)
         else:
-            # Mise à jour du rôle si nécessaire (synchro dynamique)
+            # Mise à jour dynamique (rôle et email)
             db_user.role = primary_role
+            if user_data.get("email"):
+                db_user.email = user_data["email"]
             
         db.commit()
     except Exception as e:
         db.rollback()
         logger.error(f"[Auth] Échec de la synchronisation PostgreSQL : {e}")
+    finally:
+        db.close()
+
+def ensure_assistant_user():
+    """Crée l'utilisateur virtuel 'assistant' s'il n'existe pas."""
+    db: Session = SessionLocal()
+    try:
+        assistant = db.query(User).filter(User.username == "assistant").first()
+        if not assistant:
+            logger.info("[Auth] Création du profil système 'assistant' (ID: 999999)...")
+            assistant = User(
+                id=999999, # ID très haut pour éviter les conflits Redmine
+                username="assistant",
+                email=None,
+                role="assistant",
+                hashed_password="system_internal"
+            )
+            db.add(assistant)
+            db.commit()
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[Auth] Échec création assistant : {e}")
     finally:
         db.close()

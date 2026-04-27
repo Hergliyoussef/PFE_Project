@@ -2,10 +2,22 @@
 DO $$ 
 BEGIN
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'user_role') THEN
-        CREATE TYPE user_role AS ENUM ('CEO', 'PROJECT_MANAGER');
+        CREATE TYPE user_role AS ENUM ('CEO', 'PROJECT_MANAGER', 'assistant');
+    ELSE
+        BEGIN
+            ALTER TYPE user_role ADD VALUE 'assistant';
+        EXCEPTION WHEN duplicate_object THEN NULL; END;
     END IF;
     IF NOT EXISTS (SELECT 1 FROM pg_type WHERE typname = 'msg_role') THEN
-        CREATE TYPE msg_role AS ENUM ('user', 'assistant');
+        CREATE TYPE msg_role AS ENUM ('user', 'assistant', 'CEO', 'PROJECT_MANAGER');
+    ELSE
+        -- Ajout des nouveaux types si l'enum existe déjà
+        BEGIN
+            ALTER TYPE msg_role ADD VALUE 'CEO';
+        EXCEPTION WHEN duplicate_object THEN NULL; END;
+        BEGIN
+            ALTER TYPE msg_role ADD VALUE 'PROJECT_MANAGER';
+        EXCEPTION WHEN duplicate_object THEN NULL; END;
     END IF;
 END $$;
 
@@ -28,7 +40,8 @@ CREATE INDEX IF NOT EXISTS idx_users_role ON users(role);
 -- 3. TABLE CONVERSATIONS
 CREATE TABLE IF NOT EXISTS conversations (
     id VARCHAR(100) PRIMARY KEY,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    username VARCHAR(50) NOT NULL REFERENCES users(username) ON DELETE CASCADE,
+    role_user user_role,
     title VARCHAR(255),
     project_name VARCHAR(100), -- Le projet Redmine lié à cette discussion
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -36,15 +49,15 @@ CREATE TABLE IF NOT EXISTS conversations (
 );
 
 -- Index pour retrouver vite les discussions d'un Manager
-CREATE INDEX IF NOT EXISTS idx_conversations_user_id ON conversations(user_id);
+CREATE INDEX IF NOT EXISTS idx_conversations_username ON conversations(username);
 
 -- 4. TABLE MESSAGES (Historique du Chat)
 CREATE TABLE IF NOT EXISTS messages (
     id SERIAL PRIMARY KEY,
     conversation_id VARCHAR(100) NOT NULL REFERENCES conversations(id) ON DELETE CASCADE,
-    user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+    name_user VARCHAR(50) REFERENCES users(username) ON DELETE CASCADE,
     content TEXT NOT NULL,
-    role msg_role DEFAULT 'user', -- Défini par notre ENUM (user/assistant)
+    role msg_role DEFAULT 'user', -- user, assistant, CEO, PROJECT_MANAGER
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 

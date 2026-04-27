@@ -9,6 +9,7 @@ from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from agents.state import AgentState
 from agents.analyse_agent import analyse_node
 from agents.rapporteur_agent import rapporteur_node
+from agents.planning_agent import planning_node
 from services.llm_client import get_llm
 
 logger = logging.getLogger(__name__)
@@ -19,7 +20,7 @@ REFUSAL_MSG = "Je suis un assistant spécialisé uniquement dans la gestion de p
 
 class RouterDecision(BaseModel):
     """Décision du superviseur sur l'agent à appeler."""
-    action: Literal["analyse", "rapporteur", "hors_sujet"] = Field(description="L'agent spécialisé ou hors_sujet.")
+    action: Literal["analyse", "rapporteur", "planning", "hors_sujet"] = Field(description="L'agent spécialisé ou hors_sujet.")
     intent: str = Field(description="L'intention détectée.")
     message: str = Field(default="", description="Réponse directe si hors_sujet.")
 
@@ -32,7 +33,8 @@ RÈGLES DE CONVERSATION :
 1. SALUTATIONS : Si l'utilisateur te dit bonjour ou te salue, réponds poliment (ex: "Bonjour ! Comment puis-je vous aider avec vos projets aujourd'hui ?") en utilisant l'action "hors_sujet".
 2. ANALYSE : Pour les questions sur les données, les retards, les risques ou les calculs, utilise "analyse".
 3. RAPPORT : Pour les résumés, les comptes-rendus ou les synthèses, utilise "rapporteur".
-4. HORS-SUJET TOTAL : Si la question n'a aucun lien avec le travail (ex: sport, cuisine), utilise "hors_sujet" et réponds : "{REFUSAL_MSG}"
+4. PLANIFICATION : Pour toute action de CRÉATION, AJOUT, SUPPRESSION, MODIFICATION (ex: "Crée un projet", "Ajoute un utilisateur"), utilise "planning".
+5. HORS-SUJET TOTAL : Si la question n'a aucun lien avec le travail (ex: sport, cuisine), utilise "hors_sujet" et réponds : "{REFUSAL_MSG}"
 
 Tu dois TOUJOURS répondre au format JSON."""
 
@@ -83,6 +85,8 @@ def _execute_routing(inputs: Dict[str, Any]) -> Dict[str, Any]:
         return analyse_node(state)
     elif decision.action == "rapporteur":
         return rapporteur_node(state)
+    elif decision.action == "planning":
+        return planning_node(state)
     else:
         return {
             **state, 

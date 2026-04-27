@@ -38,6 +38,81 @@ class RedmineClient:
             logger.error(f"Redmine inaccessible — {e}")
             return {}
 
+    def _post(self, path: str, payload: dict) -> dict:
+        url = f"{self.base_url}{path}"
+        try:
+            r = httpx.post(url, headers=self.headers, json=payload, timeout=15)
+            r.raise_for_status()
+            # Some Redmine POST responses might be empty (e.g. 201 Created without body)
+            return r.json() if r.text else {}
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Redmine HTTP POST {e.response.status_code} — {path} : {e.response.text}")
+            raise Exception(f"Erreur Redmine: {e.response.text}")
+        except Exception as e:
+            logger.error(f"Redmine POST inaccessible — {e}")
+            raise
+
+    def _delete(self, path: str) -> bool:
+        url = f"{self.base_url}{path}"
+        try:
+            r = httpx.delete(url, headers=self.headers, timeout=15)
+            r.raise_for_status()
+            return True
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Redmine HTTP DELETE {e.response.status_code} — {path} : {e.response.text}")
+            raise Exception(f"Erreur Redmine: {e.response.text}")
+        except Exception as e:
+            logger.error(f"Redmine DELETE inaccessible — {e}")
+            raise
+
+    def execute_action(self, action: str, params: dict) -> dict:
+        """Exécute une action planifiée."""
+        if action == "create_project":
+            return self.create_project(**params)
+        elif action == "create_user":
+            return self.create_user(**params)
+        elif action == "delete_user":
+            return {"success": self.delete_user(params.get("user_id"))}
+        elif action == "add_project_member":
+            return self.add_project_member(**params)
+        else:
+            raise ValueError(f"Action non supportée: {action}")
+
+    def create_project(self, name: str, identifier: str, description: str = "", **kwargs) -> dict:
+        payload = {
+            "project": {
+                "name": name,
+                "identifier": identifier,
+                "description": description
+            }
+        }
+        return self._post("/projects.json", payload)
+
+    def create_user(self, login: str, firstname: str, lastname: str, mail: str, password: str = "PFE@2024", **kwargs) -> dict:
+        payload = {
+            "user": {
+                "login": login,
+                "firstname": firstname,
+                "lastname": lastname,
+                "mail": mail,
+                "password": password
+            }
+        }
+        return self._post("/users.json", payload)
+
+    def delete_user(self, user_id: str, **kwargs) -> bool:
+        return self._delete(f"/users/{user_id}.json")
+
+    def add_project_member(self, project_id: str, user_id: str, role_ids: list[int], **kwargs) -> dict:
+        payload = {
+            "membership": {
+                "user_id": user_id,
+                "role_ids": role_ids
+            }
+        }
+        return self._post(f"/projects/{project_id}/memberships.json", payload)
+
+
     # --- PROJETS & VERSIONS ---
     def get_projects(self) -> list[dict]:
         data = self._get("/projects.json", {"limit": 100})

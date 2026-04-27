@@ -8,10 +8,13 @@ import enum
 class UserRole(str, enum.Enum):
     CEO = "CEO"
     PROJECT_MANAGER = "PROJECT_MANAGER"
+    assistant = "assistant"
 
+# MsgRole n'est plus nécessaire si on utilise UserRole partout, mais on peut le garder pour le chat
 class MsgRole(str, enum.Enum):
     assistant = "assistant"
-    user = "user"
+    CEO = "CEO"
+    PROJECT_MANAGER = "PROJECT_MANAGER"
 
 # 2. Table Users
 class User(Base):
@@ -26,15 +29,16 @@ class User(Base):
     role = Column(Enum(UserRole, name="user_role"), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 
-    # Relation inverse pour SQLAlchemy
-    conversations = relationship("Conversation", back_populates="owner")
+    # Relation inverse pour SQLAlchemy (Lien via username)
+    conversations = relationship("Conversation", back_populates="owner", primaryjoin="User.username == Conversation.username")
 
 # 3. Table Conversations
 class Conversation(Base):
     __tablename__ = "conversations"
 
     id = Column(String, primary_key=True)
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"))
+    username = Column(String(50), ForeignKey("users.username", ondelete="CASCADE"), nullable=False)
+    role_user = Column(Enum(UserRole, name="user_role"))
     title = Column(String(255))
     project_name = Column(String(100))
     created_at = Column(DateTime, default=datetime.utcnow)
@@ -47,7 +51,7 @@ class Message(Base):
     __tablename__ = "messages"
     id = Column(Integer, primary_key=True, index=True)
     conversation_id = Column(String, ForeignKey("conversations.id", ondelete="CASCADE"))
-    user_id = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=True)
+    name_user = Column(String(50), ForeignKey("users.username", ondelete="CASCADE"))
     role = Column(Enum(MsgRole, name="msg_role"), nullable=False)
     content = Column(Text)
     created_at = Column(DateTime, default=datetime.utcnow)

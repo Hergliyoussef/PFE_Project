@@ -5,6 +5,7 @@ import logging
 from sqlalchemy.orm import Session
 from datetime import datetime , timedelta
 import uuid
+import json
 
 from db.session import get_db
 from db.models import Message as DBMessage, Conversation as DBConv, User as DBUser
@@ -39,7 +40,7 @@ class ChatResponse(BaseModel):
 
 # ── LOGIQUE DE PERSISTENCE POSTGRES ───────────────────────────
 
-def _save_to_postgres(db: Session, user_id_int: int, project_id: str, project_name: str, question: str, answer: str, conversation_id: str):
+def _save_to_postgres(db: Session, project_id: str, project_name: str, question: str, answer: str, conversation_id: str, username: str, user_role: str):
     """Gère la création de la conversation et l'ajout des messages."""
     try:
         # 1. Vérifier ou créer la conversation
@@ -47,7 +48,8 @@ def _save_to_postgres(db: Session, user_id_int: int, project_id: str, project_na
         if not db_conv:
             db_conv = DBConv(
                 id=conversation_id, 
-                user_id=user_id_int, 
+                username=username,
+                role_user=user_role,
                 title=f"Chat {project_id} - {datetime.now().strftime('%d/%m %H:%M')}",
                 project_name=project_name or project_id
             )
@@ -57,13 +59,13 @@ def _save_to_postgres(db: Session, user_id_int: int, project_id: str, project_na
         # 2. Ajouter les messages
         msg_user = DBMessage(
             conversation_id=conversation_id, 
-            user_id=user_id_int, 
-            role= "user",
+            name_user=username,
+            role=user_role, # CEO ou PROJECT_MANAGER
             content=question
         )
         msg_ai = DBMessage(
             conversation_id=conversation_id, 
-            user_id=user_id_int, 
+            name_user="assistant", # Désormais valide car l'utilisateur existe
             role="assistant", 
             content=answer
         )
@@ -112,14 +114,31 @@ async def chat(
         answer = result.get("answer", "")
         agent_used = result.get("agent_used", "supervisor")
 
-        # 2. Sauvegarde hybride
+        # Déterminer le rôle principal pour l'enregistrement
+        user_roles = current_user.get("roles", [])
+        primary_role = "PROJECT_MANAGER"
+        if "CEO" in user_roles or current_user.get("is_admin"):
+            primary_role = "CEO"
+        elif "Manager" in user_roles:
+            primary_role = "PROJECT_MANAGER"
+
+        # 2. Formatage
+        display_type = _get_display_type(intent, req.question)
+        
+        # Si c'est l'agent de planification, on parse la réponse qui est un JSON
+        if intent == "planning" and answer.startswith("{"):
+            try:
+                data = json.loads(answer)
+                answer = data.get("description", "Veuillez confirmer l'action.")
+            except Exception:
+                data = {}
+        else:
+            data = _get_display_data(display_type, req.project_id)
+
+        # 3. Sauvegarde hybride (avec l'answer formatée)
         save_message(user_id_str, redis_key, "user", req.question)
         save_message(user_id_str, redis_key, "assistant", answer, intent=intent)
-        _save_to_postgres(db, user_id_int, req.project_id, req.project_name, req.question, answer, conv_id)
-
-        # 3. Réponse
-        display_type = _get_display_type(intent, req.question)
-        data = _get_display_data(display_type, req.project_id)
+        _save_to_postgres(db, req.project_id, req.project_name, req.question, answer, conv_id, user_id_str, primary_role)
 
         return ChatResponse(
             answer=answer, intent=intent,
@@ -140,7 +159,7 @@ async def get_permanent_history(
     db: Session = Depends(get_db)
 ):
     """Charge l'historique d'une session spécifique ou la dernière active."""
-    user_id_int = current_user.get("user_id", 1)
+    user_id_str = current_user.get("sub")
     
     if conversation_id:
         conv_id = conversation_id
@@ -148,8 +167,8 @@ async def get_permanent_history(
         # On cherche la dernière discussion de l'utilisateur pour ce projet
         last_conv = (
             db.query(DBConv)
-            .filter(DBConv.user_id == user_id_int)
-            .filter(DBConv.id.like(f"conv_{user_id_int}_{project_id}_%"))
+            .filter(DBConv.username == user_id_str)
+            .filter(DBConv.id.like(f"conv_%_{project_id}_%"))
             .order_by(DBConv.created_at.desc())
             .first()
         )
@@ -160,19 +179,37 @@ async def get_permanent_history(
     messages = db.query(DBMessage).filter(DBMessage.conversation_id == conv_id).order_by(DBMessage.created_at.asc()).all()
     
     return {
-        "history": [{"role": m.role, "content": m.content} for m in messages],
+        "history": [{"role": m.role, "content": m.content, "display_type": "text", "data": {}} for m in messages],
         "conversation_id": conv_id
     }
+
+class ExecuteTaskRequest(BaseModel):
+    action_type: str
+    parameters: dict
+
+@router.post("/execute-task")
+async def execute_task(
+    req: ExecuteTaskRequest,
+    current_user: dict = Depends(require_authorized_role)
+):
+    try:
+        from services.redmine_client import redmine
+        result = redmine.execute_action(req.action_type, req.parameters)
+        return {"success": True, "result": result, "message": "Action exécutée avec succès sur Redmine."}
+    except Exception as e:
+        logger.error(f"[Execute Task] Erreur : {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ── LOGIQUE D'AFFICHAGE ───────────────────────────────────────
 
 def _get_display_type(intent: str, question: str) -> str:
     q = question.lower()
-    if any(k in q for k in ["gantt", "planning"]): return "gantt"
+    if intent == "planning": return "action_confirmation"
+    if any(k in q for k in ["gantt", "planning", "diagramme"]): return "gantt"
     if any(k in q for k in ["risque", "danger"]): return "risk_table"
     if any(k in q for k in ["charge", "équipe"]): return "workload"
     if any(k in q for k in ["retard", "overdue"]): return "issues_table"
-    return {"planning": "gantt", "risques": "risk_table"}.get(intent, "text")
+    return {"risques": "risk_table"}.get(intent, "text")
 
 def _get_display_data(display_type: str, project_id: str) -> dict:
     if display_type == "text": return {}
@@ -260,10 +297,10 @@ async def list_conversations(
     current_user: dict = Depends(require_authorized_role),
     db: Session = Depends(get_db)
 ):
-    user_id_int = current_user.get("user_id", 1)
+    user_id_str = current_user.get("sub")
     conversations = (
         db.query(DBConv)
-        .filter(DBConv.user_id == user_id_int)
+        .filter(DBConv.username == user_id_str)
         .order_by(DBConv.created_at.desc())
         .all()
     )
@@ -291,7 +328,7 @@ async def list_conversations(
             "message_count": msg_count,
         })
     
-    logger.info(f"[Conversations] User {user_id_int} -> {len(result)} trouvées")
+    logger.info(f"[Conversations] User {user_id_str} -> {len(result)} trouvées")
     return {"conversations": result}
 
 @router.delete("/conversations/{conversation_id}")
@@ -300,17 +337,17 @@ async def delete_conversation(
     current_user: dict = Depends(require_authorized_role),
     db: Session = Depends(get_db)
 ):
-    user_id_int = current_user.get("user_id", 1)
+    user_id_str = current_user.get("sub")
     
     # Vérifier que la conversation appartient bien à l'utilisateur
-    conv = db.query(DBConv).filter(DBConv.id == conversation_id, DBConv.user_id == user_id_int).first()
+    conv = db.query(DBConv).filter(DBConv.id == conversation_id, DBConv.username == user_id_str).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation non trouvée ou non autorisée")
     
     try:
         db.delete(conv)
         db.commit()
-        logger.info(f"[Conversations] ID {conversation_id} supprimée par User {user_id_int}")
+        logger.info(f"[Conversations] ID {conversation_id} supprimée par User {user_id_str}")
         return {"message": "Conversation supprimée avec succès", "id": conversation_id}
     except Exception as e:
         db.rollback()

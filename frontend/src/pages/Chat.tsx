@@ -3,7 +3,7 @@ import Sidebar from "@/components/layout/Sidebar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Send, Loader2, Bot, User as UserIcon } from "lucide-react"
+import { Send, Loader2, Bot, User as UserIcon, CheckCircle2, XCircle, Edit3 } from "lucide-react"
 import api from "@/api/api"
 import ReactMarkdown from "react-markdown"
 import { toast } from "sonner"
@@ -139,6 +139,33 @@ export default function Chat() {
     setMessages([])
   }
 
+  const handleTaskExecution = async (action_type: string, parameters: any, msgIndex: number, accept: boolean) => {
+    if (!accept) {
+       setMessages(prev => {
+          const newMessages = [...prev]
+          newMessages[msgIndex] = { role: "assistant", content: "Action annulée par l'utilisateur." }
+          return newMessages
+       })
+       toast.info("Action annulée.")
+       return
+    }
+
+    setLoading(true)
+    try {
+      await api.post("/execute-task", { action_type, parameters })
+      toast.success("Action exécutée avec succès !")
+      setMessages(prev => {
+        const newMessages = [...prev]
+        newMessages[msgIndex] = { role: "assistant", content: "L'action a été validée et exécutée avec succès sur Redmine." }
+        return newMessages
+      })
+    } catch (e: any) {
+      toast.error(e.response?.data?.detail || "Erreur lors de l'exécution de l'action.")
+    } finally {
+      setLoading(false)
+    }
+  }
+
   return (
     <div className="flex h-screen bg-[#0b0f1a] text-slate-100 overflow-hidden font-sans">
       <Sidebar 
@@ -223,6 +250,46 @@ export default function Chat() {
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     </div>
                     
+                    {msg.display_type === "action_confirmation" && msg.data && msg.data.action_type && (
+                      <div className="mt-5 bg-slate-950/40 rounded-2xl p-5 border border-primary/20 shadow-inner">
+                         <div className="flex items-center gap-2 mb-4">
+                            <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
+                            <h4 className="text-sm font-bold text-amber-500 uppercase tracking-wider">Confirmation Requise</h4>
+                         </div>
+                         <div className="space-y-3 mb-6">
+                            {Object.entries(msg.data.parameters).map(([key, value]) => {
+                               if (!value || (Array.isArray(value) && value.length === 0)) return null;
+                               return (
+                                  <div key={key} className="flex flex-col">
+                                     <span className="text-[10px] text-slate-400 uppercase tracking-wider">{key}</span>
+                                     <input 
+                                        type="text" 
+                                        defaultValue={typeof value === 'object' ? JSON.stringify(value) : String(value)} 
+                                        className="bg-slate-900 border border-white/10 rounded-md px-3 py-1.5 text-sm text-white focus:outline-none focus:border-primary/50"
+                                        onChange={(e) => { msg.data.parameters[key] = e.target.value; }}
+                                     />
+                                  </div>
+                               )
+                            })}
+                         </div>
+                         <div className="flex gap-3">
+                            <Button 
+                              variant="outline" 
+                              className="flex-1 bg-transparent border-red-500/50 text-red-400 hover:bg-red-500/10"
+                              onClick={() => handleTaskExecution(msg.data.action_type, msg.data.parameters, i, false)}
+                            >
+                               <XCircle className="w-4 h-4 mr-2" /> Annuler
+                            </Button>
+                            <Button 
+                              className="flex-1 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 border-none"
+                              onClick={() => handleTaskExecution(msg.data.action_type, msg.data.parameters, i, true)}
+                            >
+                               <CheckCircle2 className="w-4 h-4 mr-2" /> Accepter
+                            </Button>
+                         </div>
+                      </div>
+                    )}
+
                     {msg.display_type === "workload" && msg.data && (
                       <div className="mt-5 h-52 bg-slate-950/40 rounded-2xl p-5 border border-white/5 shadow-inner">
                         <ResponsiveContainer width="100%" height="100%">

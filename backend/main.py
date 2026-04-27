@@ -22,6 +22,9 @@ async def lifespan(app: FastAPI):
     logger.info("Initialisation de la base de données...")
     Base.metadata.create_all(bind=engine) # Crée les tables Postgres si elles n'existent pas
     
+    from services.auth import ensure_assistant_user
+    ensure_assistant_user()
+    
     logger.info("Démarrage du monitoring proactif...")
     start_monitor()
     await check_all_projects()

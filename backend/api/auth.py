@@ -11,7 +11,7 @@ from fastapi import APIRouter, HTTPException, Depends, status
 from pydantic import BaseModel
 from typing import Optional
 import logging
-
+from services.redmine_client import redmine_api_key_ctx
 from services.auth import (
     authenticate_with_redmine,
     create_access_token,
@@ -20,6 +20,7 @@ from services.auth import (
     get_current_user,
     require_authorized_role,   # dépendance de protection des routes
 )
+
 
 logger = logging.getLogger(__name__)
 router = APIRouter(prefix="/auth", tags=["Authentification"])
@@ -138,6 +139,8 @@ async def get_me(current_user: dict = Depends(get_current_user)):
     Retourne les infos de l'utilisateur connecté.
     Route protégée — nécessite Authorization: Bearer <token>
     """
+    redmine_api_key_ctx.set(current_user.get("api_key"))
+    redmine_user_login_ctx.set(current_user.get("sub"))
     return {
         "login":    current_user.get("sub"),
         "user_id":  current_user.get("user_id"),

@@ -10,6 +10,7 @@ import json
 from db.session import get_db
 from db.models import Message as DBMessage, Conversation as DBConv, User as DBUser
 from services.auth import get_current_user, require_authorized_role
+from services.redmine_client import redmine, redmine_api_key_ctx, redmine_user_login_ctx
 from services.redis_client import (
     save_message, get_history,
     get_cached_metrics, cache_metrics,
@@ -85,6 +86,10 @@ async def chat(
     current_user: dict = Depends(require_authorized_role),
     db: Session = Depends(get_db)
 ):
+    # Set Redmine context
+    redmine_api_key_ctx.set(current_user.get("api_key"))
+    redmine_user_login_ctx.set(current_user.get("sub"))
+
     user_id_str = current_user.get("sub")
     user_id_int = current_user.get("user_id", 1)
 
@@ -129,7 +134,7 @@ async def chat(
         if intent == "planning" and answer.startswith("{"):
             try:
                 data = json.loads(answer)
-                answer = data.get("description", "Veuillez confirmer l'action.")
+                answer = data.get("summary", "Plusieurs actions ont été planifiées.")
             except Exception:
                 data = {}
         else:
@@ -192,10 +197,54 @@ async def execute_task(
     req: ExecuteTaskRequest,
     current_user: dict = Depends(require_authorized_role)
 ):
+    # Set Redmine context
+    redmine_api_key_ctx.set(current_user.get("api_key"))
+    redmine_user_login_ctx.set(current_user.get("sub"))
+
     try:
         from services.redmine_client import redmine
-        result = redmine.execute_action(req.action_type, req.parameters)
+        
+        is_admin = current_user.get("is_admin", False)
+        roles = current_user.get("roles", [])
+        
+        # Contrôle d'accès : Le CEO a accès à tout. Pour les autres (Manager), on vérifie le projet ciblé.
+        if not (is_admin or "CEO" in roles):
+            target_project_id = None
+            
+            # Déterminer le projet cible selon l'action
+            if req.action_type == "update_issue":
+                issue_id = req.parameters.get("issue_id")
+                if issue_id:
+                    issue_data = redmine._get(f"/issues/{issue_id}.json")
+                    target_project_id = str(issue_data.get("issue", {}).get("project", {}).get("id", ""))
+            else:
+                target_project_id = str(req.parameters.get("project_id", ""))
+                
+            if target_project_id and target_project_id.strip():
+                user_id = current_user.get("user_id")
+                # Récupérer les memberships en direct pour être sûr
+                user_data = redmine._get(f"/users/{user_id}.json", {"include": "memberships"})
+                memberships = user_data.get("user", {}).get("memberships", [])
+                
+                is_authorized = False
+                for m in memberships:
+                    p = m.get("project", {})
+                    # On compare par ID ou par Identifier (slug)
+                    if str(p.get("id")) == target_project_id or str(p.get("identifier")) == target_project_id:
+                        m_roles = [r.get("name", "") for r in m.get("roles", [])]
+                        if "Manager" in m_roles:
+                            is_authorized = True
+                            break
+                            
+                if not is_authorized:
+                    logger.warning(f"Tentative non autorisée : User {user_id} sur le projet {target_project_id}")
+                    raise HTTPException(status_code=403, detail="Accès refusé : Vous n'êtes pas Project Manager sur ce projet.")
+
+        api_key = current_user.get("api_key")
+        result = redmine.execute_action(req.action_type, req.parameters, api_key=api_key)
         return {"success": True, "result": result, "message": "Action exécutée avec succès sur Redmine."}
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"[Execute Task] Erreur : {e}")
         raise HTTPException(status_code=500, detail=str(e))
@@ -244,6 +293,10 @@ async def get_project_metrics(
     project_id: str,
     current_user: dict = Depends(require_authorized_role)
 ):
+    # Set Redmine context
+    redmine_api_key_ctx.set(current_user.get("api_key"))
+    redmine_user_login_ctx.set(current_user.get("sub"))
+
     try:
         from services.redmine_client import redmine
         # On récupère les métriques complètes de Redmine

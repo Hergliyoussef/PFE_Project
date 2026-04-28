@@ -3,7 +3,7 @@ import Sidebar from "@/components/layout/Sidebar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Send, Loader2, Bot, User as UserIcon, CheckCircle2, XCircle, Edit3 } from "lucide-react"
+import { Send, Loader2, Bot, User as UserIcon, CheckCircle2, XCircle } from "lucide-react"
 import api from "@/api/api"
 import ReactMarkdown from "react-markdown"
 import { toast } from "sonner"
@@ -139,28 +139,35 @@ export default function Chat() {
     setMessages([])
   }
 
-  const handleTaskExecution = async (action_type: string, parameters: any, msgIndex: number, accept: boolean) => {
+  const handleTaskExecution = async (actions: any[], msgIndex: number, accept: boolean) => {
     if (!accept) {
        setMessages(prev => {
           const newMessages = [...prev]
-          newMessages[msgIndex] = { role: "assistant", content: "Action annulée par l'utilisateur." }
+          newMessages[msgIndex] = { ...newMessages[msgIndex], content: "Opérations annulées par l'utilisateur." }
           return newMessages
        })
-       toast.info("Action annulée.")
+       toast.info("Opérations annulées.")
        return
     }
 
     setLoading(true)
     try {
-      await api.post("/execute-task", { action_type, parameters })
-      toast.success("Action exécutée avec succès !")
+      // Exécution séquentielle des actions
+      for (const action of actions) {
+        await api.post("/execute-task", { 
+          action_type: action.action_type, 
+          parameters: action.parameters 
+        })
+      }
+      
+      toast.success(`${actions.length} action(s) exécutée(s) avec succès !`)
       setMessages(prev => {
         const newMessages = [...prev]
-        newMessages[msgIndex] = { role: "assistant", content: "L'action a été validée et exécutée avec succès sur Redmine." }
+        newMessages[msgIndex] = { ...newMessages[msgIndex], content: "Toutes les actions ont été validées et exécutées avec succès sur Redmine." }
         return newMessages
       })
     } catch (e: any) {
-      toast.error(e.response?.data?.detail || "Erreur lors de l'exécution de l'action.")
+      toast.error(e.response?.data?.detail || "Erreur lors de l'exécution des actions.")
     } finally {
       setLoading(false)
     }
@@ -188,7 +195,6 @@ export default function Chat() {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            {/* Indicateur de Vue */}
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${
               localStorage.getItem("pm_user") && (JSON.parse(localStorage.getItem("pm_user")!).roles?.some((r: string) => r.toUpperCase().includes("CEO")) || JSON.parse(localStorage.getItem("pm_user")!).role?.toUpperCase().includes("CEO"))
                 ? "bg-primary/10 border-primary/20 text-primary"
@@ -250,43 +256,288 @@ export default function Chat() {
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     </div>
                     
-                    {msg.display_type === "action_confirmation" && msg.data && msg.data.action_type && (
-                      <div className="mt-5 bg-slate-950/40 rounded-2xl p-5 border border-primary/20 shadow-inner">
-                         <div className="flex items-center gap-2 mb-4">
+                    {msg.display_type === "action_confirmation" && msg.data && (msg.data.action_type || msg.data.actions) && (
+                      <div className="mt-5 space-y-4">
+                        <div className="bg-slate-950/40 rounded-2xl p-5 border border-primary/20 shadow-inner">
+                          <div className="flex items-center gap-2 mb-4">
                             <div className="w-2 h-2 bg-amber-500 rounded-full animate-pulse" />
-                            <h4 className="text-sm font-bold text-amber-500 uppercase tracking-wider">Confirmation Requise</h4>
-                         </div>
-                         <div className="space-y-3 mb-6">
-                            {Object.entries(msg.data.parameters).map(([key, value]) => {
-                               if (!value || (Array.isArray(value) && value.length === 0)) return null;
-                               return (
-                                  <div key={key} className="flex flex-col">
-                                     <span className="text-[10px] text-slate-400 uppercase tracking-wider">{key}</span>
-                                     <input 
-                                        type="text" 
-                                        defaultValue={typeof value === 'object' ? JSON.stringify(value) : String(value)} 
-                                        className="bg-slate-900 border border-white/10 rounded-md px-3 py-1.5 text-sm text-white focus:outline-none focus:border-primary/50"
-                                        onChange={(e) => { msg.data.parameters[key] = e.target.value; }}
-                                     />
-                                  </div>
-                               )
-                            })}
-                         </div>
-                         <div className="flex gap-3">
+                            <h4 className="text-sm font-bold text-amber-500 uppercase tracking-wider">
+                              {msg.data.actions ? `${msg.data.actions.length} Actions Planifiées` : "Confirmation Requise"}
+                            </h4>
+                          </div>
+
+                          <div className="space-y-6">
+                            {(msg.data.actions || [{ action_type: msg.data.action_type, parameters: msg.data.parameters, description: msg.data.description || msg.data.summary }]).map((action: any, idx: number) => (
+                              <div key={idx} className="p-4 bg-white/5 rounded-xl border border-white/5">
+                                <p className="text-xs font-bold text-primary mb-3 uppercase">{action.description || action.action_type}</p>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
+                                  {Object.entries(action.parameters || {}).map(([key, value]) => {
+                                    const isMissing = value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
+
+                                    if (key === 'project_id' && !isMissing) {
+                                      if (action.action_type === 'update_issue') return null; // Ne pas afficher le projet pour une modification
+                                      return (
+                                        <div key={key} className="flex flex-col">
+                                          <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Projet</span>
+                                          <input type="text" readOnly defaultValue={String(value)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                        </div>
+                                      )
+                                    }
+
+                                    if (key === 'user_id' && !isMissing) {
+                                      return (
+                                        <div key={key} className="flex flex-col">
+                                          <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Assigné à</span>
+                                          <input type="text" readOnly defaultValue={String(value)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                        </div>
+                                      )
+                                    }
+
+                                    if (key === 'subject' && !isMissing) {
+                                      return (
+                                        <div key={key} className="flex flex-col col-span-1 md:col-span-2">
+                                          <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Sujet</span>
+                                          <input type="text" readOnly defaultValue={String(value)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                        </div>
+                                      )
+                                    }
+
+                                    if (action.action_type === 'update_issue') {
+                                      if (key === 'issue_id') {
+                                        if (isMissing) {
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">ID du ticket <span className="px-1.5 py-0.5 rounded text-[8px] bg-red-500/20 text-red-400">Requis</span></span>
+                                              <input type="number" placeholder="Ex: 42" className="bg-slate-900/50 border border-red-500/30 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-red-500" onChange={(e) => { action.parameters[key] = e.target.value; }} />
+                                            </div>
+                                          )
+                                        } else {
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Ticket #</span>
+                                              <input type="text" readOnly defaultValue={String(value)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                            </div>
+                                          )
+                                        }
+                                      }
+                                      
+                                      if (key === 'status_id') {
+                                        if (isMissing) {
+                                          return (
+                                            <div key={key} className="flex flex-col col-span-1 md:col-span-2 mt-2">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">Nouveau Statut <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
+                                              <div className="flex flex-wrap gap-4">
+                                                {[ { id: 1, label: 'Nouveau' }, { id: 2, label: 'En cours' }, { id: 3, label: 'Résolu' }, { id: 4, label: 'Commentaire' }, { id: 5, label: 'Fermé' }, { id: 6, label: 'Rejeté' } ].map(opt => (
+                                                  <label key={opt.id} className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
+                                                    <input type="radio" name={`status_${idx}`} onChange={() => { action.parameters[key] = opt.id; }} className="accent-primary" /> {opt.label}
+                                                  </label>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )
+                                        } else {
+                                          const label = value === 1 ? 'Nouveau' : value === 2 ? 'En cours' : value === 3 ? 'Résolu' : value === 4 ? 'Commentaire' : value === 5 ? 'Fermé' : value === 6 ? 'Rejeté' : value;
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Nouveau Statut</span>
+                                              <input type="text" readOnly defaultValue={String(label)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                            </div>
+                                          )
+                                        }
+                                      }
+
+                                      if (key === 'notes') {
+                                        if (isMissing) {
+                                          return (
+                                            <div key={key} className="flex flex-col col-span-1 md:col-span-2 mt-2">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Commentaire <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
+                                              <textarea placeholder="Ajouter une note au ticket..." className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/50 min-h-[60px]" onChange={(e) => { action.parameters[key] = e.target.value; }} />
+                                            </div>
+                                          )
+                                        } else {
+                                          return (
+                                            <div key={key} className="flex flex-col col-span-1 md:col-span-2 mt-2">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Commentaire ajouté</span>
+                                              <textarea readOnly defaultValue={String(value)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-2 text-xs text-slate-400 focus:outline-none min-h-[60px]" />
+                                            </div>
+                                          )
+                                        }
+                                      }
+                                    }
+
+                                    if (action.action_type === 'create_issue' || action.action_type === 'update_issue') {
+                                      if (key === 'tracker_id') {
+                                        if (isMissing) {
+                                          return (
+                                            <div key={key} className="flex flex-col col-span-1 md:col-span-2 mt-2">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">Type de tâche (Tracker) <span className={`px-1.5 py-0.5 rounded text-[8px] ${action.action_type === 'create_issue' ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'}`}>{action.action_type === 'create_issue' ? 'À compléter' : 'Optionnel'}</span></span>
+                                              <div className="flex gap-4">
+                                                {[ { id: 1, label: 'Anomalie' }, { id: 2, label: 'Évolution' }, { id: 3, label: 'Assistance' } ].map(opt => (
+                                                  <label key={opt.id} className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
+                                                    <input type="radio" name={`tracker_${idx}`} onChange={() => { action.parameters[key] = opt.id; }} className="accent-primary" /> {opt.label}
+                                                  </label>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )
+                                        } else {
+                                          const label = value === 1 ? 'Anomalie' : value === 2 ? 'Évolution' : value === 3 ? 'Assistance' : value;
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Tracker</span>
+                                              <input type="text" readOnly defaultValue={String(label)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                            </div>
+                                          )
+                                        }
+                                      }
+
+                                      if (key === 'priority_id') {
+                                        if (isMissing) {
+                                          return (
+                                            <div key={key} className="flex flex-col col-span-1 md:col-span-2 mt-2">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">Priorité <span className={`px-1.5 py-0.5 rounded text-[8px] ${action.action_type === 'create_issue' ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'}`}>{action.action_type === 'create_issue' ? 'À compléter' : 'Optionnel'}</span></span>
+                                              <div className="flex flex-wrap gap-4">
+                                                {[ { id: 1, label: 'Bas' }, { id: 2, label: 'Normal' }, { id: 3, label: 'Haut' }, { id: 4, label: 'Urgent' }, { id: 5, label: 'Immédiat' } ].map(opt => (
+                                                  <label key={opt.id} className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
+                                                    <input type="radio" name={`priority_${idx}`} onChange={() => { action.parameters[key] = opt.id; }} className="accent-primary" /> {opt.label}
+                                                  </label>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )
+                                        } else {
+                                          const label = value === 1 ? 'Bas' : value === 2 ? 'Normal' : value === 3 ? 'Haut' : value === 4 ? 'Urgent' : value === 5 ? 'Immédiat' : value;
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Priorité</span>
+                                              <input type="text" readOnly defaultValue={String(label)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                            </div>
+                                          )
+                                        }
+                                      }
+
+                                      if (key === 'description') {
+                                        if (isMissing) {
+                                          return (
+                                            <div key={key} className="flex flex-col col-span-1 md:col-span-2 mt-2">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Description <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
+                                              <textarea placeholder="Ajouter une description..." className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/50 min-h-[80px]" onChange={(e) => { action.parameters[key] = e.target.value; }} />
+                                            </div>
+                                          )
+                                        }
+                                      }
+
+                                      if (key === 'user_id' && isMissing) {
+                                        if (action.action_type === 'create_issue') {
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Assigné à <span className="px-1.5 py-0.5 rounded text-[8px] bg-red-500/20 text-red-400">À compléter</span></span>
+                                              <input type="text" placeholder="Nom de l'utilisateur" className="bg-slate-900/50 border border-red-500/30 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-red-500" onChange={(e) => { action.parameters[key] = e.target.value; }} />
+                                            </div>
+                                          )
+                                        } else if (action.action_type === 'update_issue') {
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Nouvel Assigné <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
+                                              <input type="text" placeholder="Changer l'assignation..." className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50" onChange={(e) => { action.parameters[key] = e.target.value; }} />
+                                            </div>
+                                          )
+                                        }
+                                      }
+                                      
+                                      if (key === 'subject' && isMissing) {
+                                        if (action.action_type === 'create_issue') {
+                                          return (
+                                            <div key={key} className="flex flex-col col-span-1 md:col-span-2">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Sujet <span className="px-1.5 py-0.5 rounded text-[8px] bg-red-500/20 text-red-400">À compléter</span></span>
+                                              <input type="text" placeholder="Titre de la tâche" className="bg-slate-900/50 border border-red-500/30 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-red-500" onChange={(e) => { action.parameters[key] = e.target.value; }} />
+                                            </div>
+                                          )
+                                        } else if (action.action_type === 'update_issue') {
+                                          return null; // On cache le champ Sujet s'il est vide lors d'une modification pour alléger l'interface
+                                        }
+                                      }
+
+                                      if (key === 'estimated_hours') {
+                                        if (isMissing) {
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Temps estimé (h) <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
+                                              <input type="number" step="0.5" min="0" placeholder="Ex: 2.5" className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50" onChange={(e) => { action.parameters[key] = e.target.value; }} />
+                                            </div>
+                                          )
+                                        } else {
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Temps estimé</span>
+                                              <input type="text" readOnly defaultValue={`${value} heures`} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                            </div>
+                                          )
+                                        }
+                                      }
+                                      
+                                      if (key === 'done_ratio') {
+                                        if (isMissing) {
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">% Réalisé <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
+                                              <div className="flex items-center gap-3 mt-1">
+                                                <input type="range" min="0" max="100" step="10" defaultValue="0" className="flex-1 accent-primary" onChange={(e) => { action.parameters[key] = parseInt(e.target.value); e.target.nextElementSibling!.textContent = `${e.target.value}%`; }} />
+                                                <span className="text-xs text-slate-400 w-8 text-right">0%</span>
+                                              </div>
+                                            </div>
+                                          )
+                                        } else {
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">% Réalisé</span>
+                                              <div className="flex items-center gap-3">
+                                                <div className="flex-1 h-2 bg-slate-900/50 rounded-full overflow-hidden">
+                                                  <div className="h-full bg-primary" style={{ width: `${value}%` }}></div>
+                                                </div>
+                                                <span className="text-xs text-slate-300 font-bold">{String(value)}%</span>
+                                              </div>
+                                            </div>
+                                          )
+                                        }
+                                      }
+                                    }
+
+                                    if (isMissing) return null;
+
+                                    return (
+                                      <div key={key} className="flex flex-col">
+                                        <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">{key}</span>
+                                        <input 
+                                          type="text" 
+                                          defaultValue={typeof value === 'object' ? JSON.stringify(value) : String(value)} 
+                                          className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50"
+                                          onChange={(e) => { action.parameters[key] = e.target.value; }}
+                                        />
+                                      </div>
+                                    )
+                                  })}
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+
+                          <div className="flex gap-3 mt-6">
                             <Button 
                               variant="outline" 
                               className="flex-1 bg-transparent border-red-500/50 text-red-400 hover:bg-red-500/10"
-                              onClick={() => handleTaskExecution(msg.data.action_type, msg.data.parameters, i, false)}
+                              onClick={() => handleTaskExecution(msg.data.actions || [msg.data], i, false)}
                             >
-                               <XCircle className="w-4 h-4 mr-2" /> Annuler
+                               <XCircle className="w-4 h-4 mr-2" /> Tout Annuler
                             </Button>
                             <Button 
                               className="flex-1 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 border-none"
-                              onClick={() => handleTaskExecution(msg.data.action_type, msg.data.parameters, i, true)}
+                              onClick={() => handleTaskExecution(msg.data.actions || [msg.data], i, true)}
                             >
-                               <CheckCircle2 className="w-4 h-4 mr-2" /> Accepter
+                               <CheckCircle2 className="w-4 h-4 mr-2" /> Valider Tout
                             </Button>
-                         </div>
+                          </div>
+                        </div>
                       </div>
                     )}
 

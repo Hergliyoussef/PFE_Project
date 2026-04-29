@@ -52,18 +52,18 @@ export default function Login() {
   }
 
   return (
-    <div className="min-h-screen bg-[#0b0f1a] flex items-center justify-center p-12 overflow-hidden relative">
+    <div className="min-h-screen bg-[#0b0f1a] flex items-center justify-center p-4 overflow-hidden relative">
       {/* Background Orbs - Softer & More Diffused */}
       <div className="absolute top-[-10%] left-[-10%] w-[50%] h-[50%] bg-primary/5 rounded-full blur-[160px]" />
       <div className="absolute bottom-[-10%] right-[-10%] w-[50%] h-[50%] bg-purple-500/5 rounded-full blur-[160px]" />
 
-      <div className="w-full max-w-[450px] space-y-4 animate-fade-in-up transform scale-100 origin-center">
+      <div className="w-full max-w-[450px] space-y-4 animate-scale-in transform scale-100 origin-center">
         {/* Animated Logo Section */}
-        <div className="text-center space-y-4">
-          <div className="relative w-20 h-20 mx-auto mb-8">
+        <div className="text-center space-y-3">
+          <div className="relative w-16 h-16 mx-auto mb-6">
             <div className="pulse-ring border-2 border-primary/40" />
             <div className="pulse-ring border-2 border-purple-500/25 [animation-delay:1.25s]" />
-            <div className="relative z-10 w-20 h-20 bg-gradient-to-br from-primary/25 to-purple-500/20 border border-primary/35 rounded-[24px] flex items-center justify-center text-3xl shadow-2xl shadow-primary/15 animate-float">
+            <div className="relative z-10 w-16 h-16 bg-gradient-to-br from-primary/25 to-purple-500/20 border border-primary/35 rounded-[20px] flex items-center justify-center text-3xl shadow-2xl shadow-primary/15 animate-float glow-primary">
               🤖
             </div>
           </div>
@@ -79,12 +79,12 @@ export default function Login() {
         </div>
 
         {/* Login Card */}
-        <div className="bg-slate-900/40 backdrop-blur-xl border border-white/10 rounded-2xl p-6 shadow-2xl relative overflow-hidden">
+        <div className="glass-effect rounded-2xl p-5 shadow-2xl relative overflow-hidden animate-slide-right [animation-delay:200ms] glow-primary-hover">
           <div className="absolute top-0 left-0 w-full h-1 bg-gradient-to-r from-primary to-purple-500 opacity-50" />
 
-          <div className="mb-6">
-            <h2 className="text-lg font-bold text-white mb-2">Connexion</h2>
-            <p className="text-slate-400 text-[17px]">Utilisez vos identifiants Redmine</p>
+          <div className="mb-4">
+            <h2 className="text-base font-bold text-white mb-1">Connexion</h2>
+            <p className="text-slate-400 text-sm">Identifiants Redmine</p>
           </div>
 
           <form onSubmit={handleLogin} className="space-y-2.5">
@@ -133,13 +133,13 @@ export default function Login() {
         </div>
 
         {/* Footer Info */}
-        <div className="bg-indigo-500/5 border border-indigo-500/15 rounded-2xl p-4 text-center space-y-2">
-          <div className="flex items-center justify-center gap-2 text-[11px] font-bold text-slate-400 uppercase tracking-wider">
+        <div className="bg-indigo-500/5 border border-indigo-500/15 rounded-2xl p-3 text-center space-y-1 animate-fade-in [animation-delay:400ms]">
+          <div className="flex items-center justify-center gap-2 text-[10px] font-bold text-slate-400 uppercase tracking-wider">
             <ShieldCheck className="w-3 h-3 text-indigo-400" strokeWidth={2.5} />
-            Accès réservé aux Chefs de projet & CEO uniquement
+            Chefs de projet & CEO uniquement
           </div>
-          <p className="text-[10px] text-slate-600 font-medium">
-            élaboré par Hergli Youssef - PFE/2026
+          <p className="text-[9px] text-slate-600 font-medium">
+            PFE/2026 — Hergli Youssef
           </p>
         </div>
       </div>

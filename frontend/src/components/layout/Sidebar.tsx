@@ -36,14 +36,14 @@ interface UserData {
   login: string
 }
 
-export default function Sidebar({ 
-  activeConvId, 
-  onSelectConv, 
-  onNewChat 
-}: { 
-  activeConvId?: string, 
+export default function Sidebar({
+  activeConvId,
+  onSelectConv,
+  onNewChat
+}: {
+  activeConvId?: string,
   onSelectConv: (id: string) => void,
-  onNewChat: () => void 
+  onNewChat: () => void
 }) {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -151,8 +151,8 @@ export default function Sidebar({
           </Select>
         </div>
 
-        <Button 
-          variant="outline" 
+        <Button
+          variant="outline"
           className="w-full justify-start gap-2 border-white/10 bg-primary/5 hover:bg-primary/10 text-primary border-primary/20 font-bold"
           onClick={onNewChat}
         >
@@ -175,22 +175,20 @@ export default function Sidebar({
                 key={conv.id}
                 onClick={() => onSelectConv(conv.id)}
                 role="button"
-                className={`group w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all relative cursor-pointer ${
-                  activeConvId === conv.id 
-                    ? "bg-primary/10 text-primary font-bold" 
+                className={`group w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all relative cursor-pointer ${activeConvId === conv.id
+                    ? "bg-primary/10 text-primary font-bold"
                     : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
-                }`}
+                  }`}
               >
                 <div className="relative shrink-0">
                   <MessageSquare className={`w-4 h-4 ${activeConvId === conv.id ? "text-primary" : "text-slate-500"}`} strokeWidth={2.5} />
-                  <div className={`absolute -top-1 -right-1 w-2 h-2 rounded-full border-2 border-slate-950 ${
-                    activeConvId === conv.id 
-                      ? "bg-emerald-500 shadow-[0_0_5px_#10b981] animate-pulse" 
+                  <div className={`absolute -top-1 -right-1 w-2 h-2 rounded-full border-2 border-slate-950 ${activeConvId === conv.id
+                      ? "bg-emerald-500 shadow-[0_0_5px_#10b981] animate-pulse"
                       : "bg-slate-700"
-                  }`} />
+                    }`} />
                 </div>
                 <span className="truncate text-left pr-6">{conv.title || "Nouvelle discussion"}</span>
-                
+
                 <button
                   onClick={(e) => handleDelete(e, conv.id)}
                   className="absolute right-2 opacity-0 group-hover:opacity-100 p-1 rounded-md hover:bg-red-500/20 hover:text-red-400 transition-all z-10"
@@ -212,16 +210,16 @@ export default function Sidebar({
       {/* Footer Navigation & Profile */}
       <div className="p-4 space-y-4">
         <div className="space-y-1">
-          <Button 
-            variant="ghost" 
+          <Button
+            variant="ghost"
             className="w-full justify-start gap-3 text-slate-400 hover:text-slate-100 hover:bg-white/5 px-3 h-10 font-bold"
             onClick={() => navigate("/dashboard")}
           >
             <LayoutDashboard className="w-4 h-4" strokeWidth={2.5} />
             Tableau de Bord
           </Button>
-          <Button 
-            variant="ghost" 
+          <Button
+            variant="ghost"
             className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-500/10 px-3 h-10 font-bold"
             onClick={handleLogout}
           >

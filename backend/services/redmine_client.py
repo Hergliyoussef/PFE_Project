@@ -51,11 +51,35 @@ class RedmineClient:
             r.raise_for_status()
             return r.json()
         except httpx.HTTPStatusError as e:
-            logger.error(f"Redmine HTTP {e.response.status_code} — {path}")
-            return {}
+            logger.error(f"Redmine HTTP {e.response.status_code} — {path} : {e.response.text}")
+            # On propage l'erreur au lieu de renvoyer un dict vide qui fait planter la suite
+            raise Exception(f"Erreur Redmine {e.response.status_code}: {e.response.text}")
         except Exception as e:
             logger.error(f"Redmine inaccessible — {e}")
-            return {}
+            raise
+
+    def _get_admin(self, path: str, params: dict = None) -> dict:
+        """
+        Requête GET utilisant TOUJOURS la clé API admin du serveur.
+        À utiliser pour les endpoints qui exigent des droits admin dans Redmine
+        (ex: /users.json, /users/{id}.json avec include=memberships).
+        """
+        url = f"{self.base_url}{path}"
+        # On ignore délibérément le contexte utilisateur et on utilise la clé admin globale
+        headers = {
+            "X-Redmine-API-Key": self.api_key,
+            "Content-Type": "application/json",
+        }
+        try:
+            r = httpx.get(url, headers=headers, params=params or {}, timeout=15)
+            r.raise_for_status()
+            return r.json()
+        except httpx.HTTPStatusError as e:
+            logger.error(f"Redmine Admin HTTP {e.response.status_code} — {path} : {e.response.text}")
+            raise Exception(f"Erreur Redmine {e.response.status_code}: {e.response.text}")
+        except Exception as e:
+            logger.error(f"Redmine Admin inaccessible — {e}")
+            raise
 
     def _post(self, path: str, payload: dict, api_key: str = None, user_login: str = None) -> dict:
         url = f"{self.base_url}{path}"
@@ -129,29 +153,60 @@ class RedmineClient:
 
     def execute_action(self, action: str, params: dict, api_key: str = None) -> dict:
         """Exécute une action planifiée."""
+
+        def _resolve_user_id(p: dict) -> str:
+            """Résout l'identifiant utilisateur depuis plusieurs champs possibles."""
+            return (
+                p.get("user_id") or
+                p.get("utilisateur") or
+                p.get("login") or
+                p.get("firstname") or
+                ""
+            )
+
         if action == "create_project":
             return self.create_project(api_key=api_key, **params)
         elif action == "create_user":
             return self.create_user(api_key=api_key, **params)
         elif action == "delete_user":
-            return {"success": self.delete_user(params.get("user_id"), api_key=api_key)}
+            uid = _resolve_user_id(params)
+            return {"success": self.delete_user(uid, api_key=api_key)}
         elif action == "delete_project":
             return {"success": self.delete_project(params.get("project_id"), api_key=api_key)}
         elif action == "add_project_member":
             return self.add_project_member(api_key=api_key, **params)
+        elif action == "remove_project_member":
+            uid = _resolve_user_id(params)
+            return {"success": self.remove_project_member(params.get("project_id"), uid, api_key=api_key)}
         elif action == "create_issue":
             return self.create_issue(api_key=api_key, **params)
         elif action == "update_issue":
             return self.update_issue(api_key=api_key, **params)
+        elif action == "delete_issue":
+            issue_id = params.get("issue_id")
+            if issue_id:
+                return {"success": self.delete_issue(str(issue_id), api_key=api_key)}
+            # Fallback : suppression par filtre si pas d'issue_id mais des filtres
+            elif params.get("project_id") and (params.get("tracker_id") or params.get("status_id") or params.get("état_id")):
+                return self.delete_issues_by_filter(api_key=api_key, **params)
+            else:
+                raise Exception("L'ID du ticket (issue_id) est obligatoire pour supprimer une tâche. Précisez le numéro du ticket.")
+        elif action == "update_user":
+            return self.update_user(api_key=api_key, **params)
         else:
             raise ValueError(f"Action non supportée: {action}")
 
     def create_project(self, name: str, identifier: str, description: str = "", api_key: str = None, **kwargs) -> dict:
         # 1. Vérifier si le projet existe déjà par son identifiant
-        data = self._get(f"/projects/{identifier}.json", api_key=api_key)
-        if data and "project" in data:
-            logger.info(f"[Redmine] Projet existant trouvé : {identifier}")
-            return data
+        try:
+            data = self._get(f"/projects/{identifier}.json", api_key=api_key)
+            if data and "project" in data:
+                logger.info(f"[Redmine] Projet existant trouvé : {identifier}")
+                return data
+        except Exception as e:
+            # Si c'est un 404, c'est normal, on continue pour créer le projet
+            if "404" not in str(e):
+                raise
 
         # 2. Sinon, créer
         payload = {
@@ -164,9 +219,13 @@ class RedmineClient:
         return self._post("/projects.json", payload, api_key=api_key)
 
     def get_user_id_by_fuzzy_search(self, search_term: str, api_key: str = None) -> Optional[str]:
-        """Cherche un utilisateur par login, prénom ou nom."""
+        """
+        Cherche un utilisateur par login, prénom ou nom.
+        Utilise TOUJOURS la clé admin car /users.json requiert des droits admin dans Redmine.
+        """
         # 1. Test direct par login (le plus rapide)
-        data = self._get("/users.json", {"name": search_term}, api_key=api_key)
+        # NOTE: /users.json nécessite des droits admin — on utilise _get_admin pour éviter un 403
+        data = self._get_admin("/users.json", {"name": search_term})
         users = data.get("users", [])
         
         # 2. Chercher une correspondance exacte sur le login
@@ -207,34 +266,182 @@ class RedmineClient:
         return self._post("/users.json", payload, api_key=api_key)
 
     def delete_user(self, user_id: str, api_key: str = None, **kwargs) -> bool:
+        """Supprime un utilisateur (compte global) via ID ou Nom/Login."""
+        if not user_id:
+             raise Exception("L'ID ou le Nom de l'utilisateur est obligatoire.")
+
+        if not str(user_id).isdigit():
+            resolved_id = self.get_user_id_by_fuzzy_search(str(user_id), api_key=api_key)
+            if resolved_id:
+                logger.info(f"[Redmine] Résolution delete_user : {user_id} -> ID {resolved_id}")
+                user_id = resolved_id
+            else:
+                raise Exception(f"Impossible de supprimer : l'utilisateur '{user_id}' n'a pas été trouvé sur Redmine.")
+
         return self._delete(f"/users/{user_id}.json", api_key=api_key)
 
-    def delete_project(self, project_id: str, api_key: str = None, **kwargs) -> bool:
-        """Supprime un projet par son ID ou identifiant."""
-        return self._delete(f"/projects/{project_id}.json", api_key=api_key)
+    def update_user(self, user_id: str, firstname: str = None, lastname: str = None, mail: str = None, api_key: str = None, **kwargs) -> dict:
+        """Met à jour les informations d'un utilisateur."""
+        if not user_id:
+            raise Exception("L'ID de l'utilisateur (user_id) est obligatoire.")
 
-    def add_project_member(self, project_id: str, user_id: str, role_ids: list[int], api_key: str = None, **kwargs) -> dict:
-        # Si user_id n'est pas un chiffre, on tente de le résoudre (fuzzy search)
+        # Résolution si user_id n'est pas numérique
         if not str(user_id).isdigit():
             resolved_id = self.get_user_id_by_fuzzy_search(str(user_id), api_key=api_key)
             if resolved_id:
                 user_id = resolved_id
             else:
-                # Auto-création si l'utilisateur n'existe pas
+                raise Exception(f"Utilisateur '{user_id}' non trouvé.")
+
+        user_payload = {}
+        if firstname: user_payload["firstname"] = firstname
+        if lastname: user_payload["lastname"] = lastname
+        if mail: user_payload["mail"] = mail
+        
+        # On peut aussi ajouter le password si besoin, mais restons sur les coordonnées
+        if kwargs.get("login"): user_payload["login"] = kwargs.get("login")
+
+        payload = {"user": user_payload}
+        success = self._put(f"/users/{user_id}.json", payload, api_key=api_key)
+        return {"success": success, "user_id": user_id, "updated_fields": list(user_payload.keys())}
+
+    def delete_project(self, project_id: str, api_key: str = None, **kwargs) -> bool:
+        """Supprime un projet par son ID ou identifiant."""
+        return self._delete(f"/projects/{project_id}.json", api_key=api_key)
+
+    def delete_issue(self, issue_id: str, api_key: str = None, **kwargs) -> bool:
+        """Supprime une tâche par son ID."""
+        return self._delete(f"/issues/{issue_id}.json", api_key=api_key)
+
+    def delete_issues_by_filter(self, project_id: str, tracker_id: int = None, status_id: int = None, état_id: int = None, api_key: str = None, **kwargs) -> dict:
+        """Supprime toutes les tâches d'un projet correspondant aux filtres (tracker, statut)."""
+        if not project_id:
+            raise Exception("Le projet (project_id) est obligatoire pour une suppression par filtre.")
+        
+        # Normaliser status_id / état_id
+        effective_status = status_id or état_id
+        
+        # Construire la requête de recherche
+        params: dict = {"project_id": project_id, "limit": 100}
+        if tracker_id:
+            params["tracker_id"] = tracker_id
+        if effective_status:
+            params["status_id"] = effective_status
+        
+        logger.info(f"[Redmine] Recherche issues à supprimer : {params}")
+        data = self._get_admin("/issues.json", params)
+        issues = data.get("issues", [])
+        
+        if not issues:
+            return {"deleted": 0, "message": "Aucune tâche trouvée correspondant aux critères."}
+        
+        deleted, errors = 0, []
+        for issue in issues:
+            try:
+                self._delete(f"/issues/{issue['id']}.json", api_key=api_key)
+                deleted += 1
+                logger.info(f"[Redmine] Issue #{issue['id']} supprimée")
+            except Exception as e:
+                errors.append(str(e))
+        
+        return {"deleted": deleted, "total": len(issues), "errors": errors}
+
+    def add_project_member(self, project_id: str, user_id: str, role_ids: list[int] = None, copy_roles_from: str = None, api_key: str = None, **kwargs) -> dict:
+        # 1. Résolution de l'utilisateur à ajouter
+        if not str(user_id).isdigit():
+            resolved_id = self.get_user_id_by_fuzzy_search(str(user_id), api_key=api_key)
+            if resolved_id:
+                user_id = resolved_id
+            else:
                 logger.info(f"Utilisateur introuvable pour {user_id}. Création automatique.")
                 login_name = str(user_id).lower().replace(' ', '.')
                 new_user = self.create_user(login=login_name, firstname=str(user_id), lastname="Nouveau", mail=f"{login_name}@pfe.local", api_key=api_key)
                 user_id = str(new_user.get("user", {}).get("id"))
-                if not user_id:
-                    raise Exception(f"Impossible de créer l'utilisateur '{user_id}' automatiquement.")
+
+        # 2. Gestion de la copie des rôles ("à sa place")
+        final_role_ids = role_ids or []
+        if copy_roles_from:
+            # Résoudre l'utilisateur source
+            source_user_id = copy_roles_from
+            if not str(source_user_id).isdigit():
+                source_user_id = self.get_user_id_by_fuzzy_search(str(source_user_id), api_key=api_key)
+            
+            if source_user_id:
+                # Chercher ses rôles dans le projet
+                members = self.get_project_members(project_id)
+                for m in members:
+                    if str(m.get("user", {}).get("id")) == str(source_user_id):
+                        final_role_ids = [r.get("id") for r in m.get("roles", [])]
+                        logger.info(f"[Redmine] Rôles copiés de {copy_roles_from} ({final_role_ids})")
+                        break
+
+        # 3. Gestion du rôle par nom (si fourni et pas de rôle via copie)
+        if kwargs.get("role") and not final_role_ids:
+            role_map = {
+                "manager": 3,
+                "project manager": 3,
+                "gestionnaire": 3,
+                "chef de projet": 3,
+                "ceo": 6,
+                "developpeur": 4,
+                "développeur": 4,
+                "developer": 4,
+                "rapporteur": 5,
+                "reporter": 5
+            }
+            role_name = str(kwargs.get("role")).lower().strip()
+            if role_name in role_map:
+                final_role_ids = [role_map[role_name]]
+                logger.info(f"[Redmine] Rôle résolu par nom : {role_name} -> {final_role_ids}")
+
+        # Par défaut si aucun rôle trouvé
+        if not final_role_ids:
+            final_role_ids = [4] # Développeur par défaut
 
         payload = {
             "membership": {
                 "user_id": int(user_id),
-                "role_ids": role_ids
+                "role_ids": final_role_ids
             }
         }
         return self._post(f"/projects/{project_id}/memberships.json", payload, api_key=api_key)
+
+    def remove_project_member(self, project_id: str, user_id: str, api_key: str = None, **kwargs) -> bool:
+        """Retire un membre d'un projet (Compatible Project Manager)."""
+        if not project_id or not user_id:
+            raise Exception("project_id et user_id sont obligatoires pour retirer un membre.")
+
+        # 1. On récupère d'abord les membres du projet (autorisé pour les PM)
+        # On utilise l'ID du projet résolu si possible
+        data = self._get(f"/projects/{project_id}/memberships.json", api_key=api_key)
+        memberships = data.get("memberships", [])
+        
+        membership_id = None
+        
+        # 2. Recherche du membre dans la liste (par Nom ou par ID)
+        search_term = str(user_id).lower().strip()
+        is_digit = search_term.isdigit()
+        
+        for m in memberships:
+            u = m.get("user", {})
+            u_id = str(u.get("id"))
+            u_name = u.get("name", "").lower()
+            
+            if is_digit:
+                if u_id == search_term:
+                    membership_id = m.get("id")
+                    break
+            else:
+                # Recherche floue dans le nom du membre du projet
+                if search_term in u_name:
+                    membership_id = m.get("id")
+                    logger.info(f"[Redmine] Membre trouvé dans le projet : {u_name} -> Membership ID {membership_id}")
+                    break
+        
+        if not membership_id:
+            raise Exception(f"L'utilisateur '{user_id}' n'a pas été trouvé parmi les membres du projet {project_id}.")
+            
+        return self._delete(f"/memberships/{membership_id}.json", api_key=api_key)
 
     def _ensure_project_member(self, project_id: str, user_id: int, api_key: str = None):
         """S'assure que l'utilisateur est membre du projet (rôle développeur=4 par défaut)."""

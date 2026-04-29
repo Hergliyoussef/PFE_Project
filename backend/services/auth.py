@@ -42,13 +42,21 @@ pwd_context = CryptContext(schemes=["bcrypt"], deprecated="auto")
 # ❌ Développeur, Rapporteur  →  accès refusé (HTTP 403)
 AUTHORIZED_ROLES = {
     "Manager",
+    "Project Manager",
+    "Chef de projet",
     "CEO",
+    "Administrator",
+    "Admin",
+    "Gestionnaire",
 }
 
 ROLE_PRIORITY = {
     "CEO": 1,
+    "Administrator": 1,
+    "Admin": 1,
     "Manager": 2,
-    "D développeur": 10,  # Gestion de l'encodage Redmine probable
+    "Project Manager": 2,
+    "Chef de projet": 2,
     "Développeur": 10,
     "Developer": 10,
     "Rapporteur": 10,
@@ -81,7 +89,8 @@ async def authenticate_with_redmine(login: str, password: str) -> Optional[dict]
 
         user = response.json().get("user", {})
         logger.info(f"[Auth] Données Redmine reçues pour {login} : {user}")
-        is_admin = user.get("admin", False)
+        # L'admin Redmine (ID 1) est toujours considéré comme CEO/Admin
+        is_admin = user.get("admin", False) or user.get("id") == 1
 
         # ── Extraction des rôles et projets autorisés ──────────────────────
         memberships = user.get("memberships", [])
@@ -297,11 +306,16 @@ async def require_authorized_role(
     """
     if current_user.get("is_admin"):
         return current_user
-    user_roles = set(current_user.get("roles", []))
-    if not user_roles & AUTHORIZED_ROLES:
+    
+    # Comparaison insensible à la casse
+    user_roles = {r.lower().strip() for r in current_user.get("roles", [])}
+    allowed_roles = {r.lower().strip() for r in AUTHORIZED_ROLES}
+    
+    if not (user_roles & allowed_roles):
+        logger.warning(f"[Auth] Accès refusé pour {current_user.get('sub')}. Rôles détectés: {user_roles} | Rôles requis: {allowed_roles}")
         raise HTTPException(
             status_code = status.HTTP_403_FORBIDDEN,
-            detail      = "Accès réservé aux Chefs de Projet et CEO.",
+            detail      = f"Accès réservé aux Chefs de Projet et CEO. (Rôles détectés : {list(user_roles)})",
         )
     return current_user
 def sync_user_to_db(user_data: dict):

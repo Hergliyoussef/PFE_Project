@@ -12,6 +12,7 @@ class AgentState(TypedDict):
     project_name: str
     project_id:  str
     user_id:     str
+    user_role:   str
 
     # ── Superviseur ───────────────────────────────────────────
     intent:      str

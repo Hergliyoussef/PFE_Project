@@ -33,7 +33,7 @@ export default function Chat() {
       const user = JSON.parse(userData)
       const proj = user.authorized_projects?.find((p: any) => p.identifier === activePid)
       if (proj) setProjectName(proj.name)
-      
+
       if (activeConvId) {
         handleSelectConv(activeConvId)
       }
@@ -93,14 +93,14 @@ export default function Chat() {
         history: messages.slice(-5)
       })
 
-      const botMessage: Message = { 
-        role: "assistant", 
+      const botMessage: Message = {
+        role: "assistant",
         content: response.data.answer || response.data.final_answer,
         display_type: response.data.display_type,
         data: response.data.data
       }
       setMessages(prev => [...prev, botMessage])
-      
+
       if (response.data.conversation_id && !activeConvId) {
         setActiveConvId(response.data.conversation_id)
         localStorage.setItem("pm_last_conv_id", response.data.conversation_id)
@@ -141,25 +141,25 @@ export default function Chat() {
 
   const handleTaskExecution = async (actions: any[], msgIndex: number, accept: boolean) => {
     if (!accept) {
-       setMessages(prev => {
-          const newMessages = [...prev]
-          newMessages[msgIndex] = { ...newMessages[msgIndex], content: "Opérations annulées par l'utilisateur." }
-          return newMessages
-       })
-       toast.info("Opérations annulées.")
-       return
+      setMessages(prev => {
+        const newMessages = [...prev]
+        newMessages[msgIndex] = { ...newMessages[msgIndex], content: "Opérations annulées par l'utilisateur." }
+        return newMessages
+      })
+      toast.info("Opérations annulées.")
+      return
     }
 
     setLoading(true)
     try {
       // Exécution séquentielle des actions
       for (const action of actions) {
-        await api.post("/execute-task", { 
-          action_type: action.action_type, 
-          parameters: action.parameters 
+        await api.post("/execute-task", {
+          action_type: action.action_type,
+          parameters: action.parameters
         })
       }
-      
+
       toast.success(`${actions.length} action(s) exécutée(s) avec succès !`)
       setMessages(prev => {
         const newMessages = [...prev]
@@ -175,8 +175,8 @@ export default function Chat() {
 
   return (
     <div className="flex h-screen bg-[#0b0f1a] text-slate-100 overflow-hidden font-sans">
-      <Sidebar 
-        activeConvId={activeConvId} 
+      <Sidebar
+        activeConvId={activeConvId}
         onSelectConv={handleSelectConv}
         onNewChat={handleNewChat}
       />
@@ -186,8 +186,8 @@ export default function Chat() {
         <header className="h-16 border-b border-white/5 flex items-center justify-between px-8 bg-slate-950/40 backdrop-blur-2xl sticky top-0 z-20">
           <div className="flex flex-col">
             <div className="flex items-center gap-2.5">
-               <div className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
-               <h2 className="font-black text-base tracking-tight text-white">Assistant IA</h2>
+              <div className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
+              <h2 className="font-black text-base tracking-tight text-white">Assistant IA</h2>
             </div>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Workspace:</span>
@@ -195,11 +195,10 @@ export default function Chat() {
             </div>
           </div>
           <div className="flex items-center gap-4">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${
-              localStorage.getItem("pm_user") && (JSON.parse(localStorage.getItem("pm_user")!).roles?.some((r: string) => r.toUpperCase().includes("CEO")) || JSON.parse(localStorage.getItem("pm_user")!).role?.toUpperCase().includes("CEO"))
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${localStorage.getItem("pm_user") && (JSON.parse(localStorage.getItem("pm_user")!).roles?.some((r: string) => r.toUpperCase().includes("CEO")) || JSON.parse(localStorage.getItem("pm_user")!).role?.toUpperCase().includes("CEO"))
                 ? "bg-primary/10 border-primary/20 text-primary"
                 : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-            }`}>
+              }`}>
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse" />
               <span className="text-[10px] font-black uppercase tracking-[0.2em]">
                 {localStorage.getItem("pm_user") && (JSON.parse(localStorage.getItem("pm_user")!).roles?.some((r: string) => r.toUpperCase().includes("CEO")) || JSON.parse(localStorage.getItem("pm_user")!).role?.toUpperCase().includes("CEO"))
@@ -232,30 +231,28 @@ export default function Chat() {
 
             {messages.map((msg, i) => (
               <div key={i} className={`flex gap-5 animate-in slide-in-from-bottom-6 duration-500 ${msg.role === "assistant" ? "flex-row items-start" : "flex-row-reverse items-start"}`}>
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-2xl transition-transform hover:scale-105 ${
-                  msg.role === "assistant" 
-                    ? "bg-gradient-to-br from-primary to-indigo-600 text-white" 
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-2xl transition-transform hover:scale-105 ${msg.role === "assistant"
+                    ? "bg-gradient-to-br from-primary to-indigo-600 text-white"
                     : "bg-slate-800 text-slate-300 border border-white/10"
-                }`}>
+                  }`}>
                   {msg.role === "assistant" ? <Bot className="w-5.5 h-5.5" /> : <UserIcon className="w-5.5 h-5.5" />}
                 </div>
-                
+
                 <div className={`flex flex-col space-y-2 max-w-[85%] ${msg.role === "user" ? "items-end" : "items-start"}`}>
                   <div className="flex items-center gap-2 px-1">
                     <span className="font-black text-[9px] text-slate-500 uppercase tracking-[0.2em]">
                       {msg.role === "assistant" ? "Assistant" : "Utilisateur"}
                     </span>
                   </div>
-                  
-                  <div className={`px-6 py-4 rounded-[24px] shadow-2xl relative overflow-hidden transition-all hover:shadow-primary/5 ${
-                    msg.role === "assistant" 
-                      ? "bg-white/[0.04] backdrop-blur-xl border border-white/5 text-slate-200" 
+
+                  <div className={`px-6 py-4 rounded-[24px] shadow-2xl relative overflow-hidden transition-all hover:shadow-primary/5 ${msg.role === "assistant"
+                      ? "bg-white/[0.04] backdrop-blur-xl border border-white/5 text-slate-200"
                       : "bg-gradient-to-br from-indigo-600 to-primary text-white border border-white/10 rounded-tr-none"
-                  }`}>
+                    }`}>
                     <div className="text-sm leading-relaxed prose prose-invert prose-p:my-0 prose-pre:bg-slate-950/50 prose-pre:border prose-pre:border-white/10 max-w-none">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
                     </div>
-                    
+
                     {msg.display_type === "action_confirmation" && msg.data && (msg.data.action_type || msg.data.actions) && (
                       <div className="mt-5 space-y-4">
                         <div className="bg-slate-950/40 rounded-2xl p-5 border border-primary/20 shadow-inner">
@@ -268,18 +265,148 @@ export default function Chat() {
 
                           <div className="space-y-6">
                             {(msg.data.actions || [{ action_type: msg.data.action_type, parameters: msg.data.parameters, description: msg.data.description || msg.data.summary }]).map((action: any, idx: number) => (
-                              <div key={idx} className="p-4 bg-white/5 rounded-xl border border-white/5">
-                                <p className="text-xs font-bold text-primary mb-3 uppercase">{action.description || action.action_type}</p>
+                              <div key={idx} className={`p-4 bg-white/5 rounded-xl border ${action.action_type.startsWith('delete') ? 'border-red-500/30 bg-red-500/5' : 'border-white/5'}`}>
+                                <div className="flex items-center gap-2 mb-3">
+                                  {action.action_type.startsWith('delete') && <XCircle className="w-3.5 h-3.5 text-red-500" />}
+                                  <p className={`text-xs font-bold uppercase ${action.action_type.startsWith('delete') ? 'text-red-400' : 'text-primary'}`}>
+                                    {action.description || action.action_type}
+                                  </p>
+                                </div>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                   {Object.entries(action.parameters || {}).map(([key, value]) => {
                                     const isMissing = value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
 
+                                    // ── RENDU SPÉCIAL POUR CREATE_USER (DOIT ÊTRE EN PREMIER) ─────
+                                    if (action.action_type === 'create_user') {
+                                      const USER_CREATE_FIELDS: Record<string, { label: string; type: string; placeholder: string }> = {
+                                        firstname: { label: 'Prénom',       type: 'text',     placeholder: 'Ex: Ismail'           },
+                                        lastname:  { label: 'Nom',          type: 'text',     placeholder: 'Ex: Benhaddou'        },
+                                        login:     { label: 'Identifiant',  type: 'text',     placeholder: 'Ex: ismail.benhaddou' },
+                                        mail:      { label: 'Email',        type: 'email',    placeholder: 'Ex: ismail@pfe.local' },
+                                        password:  { label: 'Mot de passe', type: 'password', placeholder: 'Min. 8 caractères'    },
+                                      };
+                                      if (key in USER_CREATE_FIELDS) {
+                                        const fieldDef = USER_CREATE_FIELDS[key];
+                                        return (
+                                          <div key={key} className="flex flex-col">
+                                            <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                                              {fieldDef.label}
+                                              <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Requis</span>
+                                            </span>
+                                            <input
+                                              type={fieldDef.type}
+                                              defaultValue={isMissing ? '' : String(value)}
+                                              placeholder={fieldDef.placeholder}
+                                              className={`bg-slate-900/50 border rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50 transition-colors ${isMissing ? 'border-amber-500/30' : 'border-white/10'}`}
+                                              onChange={(e) => { action.parameters[key] = e.target.value; }}
+                                            />
+                                          </div>
+                                        )
+                                      }
+                                      return null; // masquer tous les autres champs pour create_user
+                                    }
+
+                                    // Masquer le mot de passe pour toutes les autres actions
+                                    if (key === 'password') return null;
+
+                                    // Masquer les champs techniques ou redondants
+                                    const HIDDEN_FIELDS = ['utilisateur', 'firstname', 'lastname', 'mail', 'login', 'password'];
+                                    if (HIDDEN_FIELDS.includes(key)) return null;
+
                                     if (key === 'project_id' && !isMissing) {
-                                      if (action.action_type === 'update_issue') return null; // Ne pas afficher le projet pour une modification
+                                      // Masquer le projet pour les actions qui ont déjà leur contexte
+                                      if (['update_issue', 'create_project'].includes(action.action_type)) return null;
                                       return (
                                         <div key={key} className="flex flex-col">
                                           <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Projet</span>
                                           <input type="text" readOnly defaultValue={String(value)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                        </div>
+                                      )
+                                    }
+
+                                    if (key === 'copy_roles_from' && !isMissing) {
+                                      return (
+                                        <div key={key} className="flex flex-col col-span-1 md:col-span-2">
+                                          <span className="text-[9px] text-primary uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                                            <Bot className="w-3 h-3" /> Héritage des rôles
+                                          </span>
+                                          <div className="bg-primary/5 border border-primary/20 rounded-lg px-3 py-1.5 text-xs text-primary font-bold">
+                                            Prendre la place de : {String(value)}
+                                          </div>
+                                        </div>
+                                      )
+                                    }
+
+                                    // ── SÉLECTEUR DE RÔLE pour add_project_member ─────────────────
+                                    if (action.action_type === 'add_project_member') {
+                                      if (key === 'role' && !isMissing) {
+                                        // Rôle fourni par le LLM → lecture seule
+                                        return (
+                                          <div key={key} className="flex flex-col col-span-1 md:col-span-2">
+                                            <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Rôle attribué</span>
+                                            <div className="bg-primary/10 border border-primary/30 rounded-lg px-3 py-2 text-xs text-primary font-bold">{String(value)}</div>
+                                          </div>
+                                        )
+                                      }
+                                      if (key === 'role_ids' && !isMissing && !action.parameters.role) {
+                                        const ROLE_NAMES: Record<number, string> = { 3: 'Chef de projet', 4: 'Développeur', 5: 'Rapporteur' };
+                                        const roleArr = Array.isArray(value) ? value : [value];
+                                        const roleLabel = roleArr.map((id: number) => ROLE_NAMES[id] || `Rôle ${id}`).join(', ');
+                                        return (
+                                          <div key={key} className="flex flex-col col-span-1 md:col-span-2">
+                                            <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Rôle attribué</span>
+                                            <div className="bg-primary/10 border border-primary/30 rounded-lg px-3 py-2 text-xs text-primary font-bold">{roleLabel}</div>
+                                          </div>
+                                        )
+                                      }
+                                      // Rôle manquant → sélecteur radio
+                                      if ((key === 'role' || key === 'role_ids') && isMissing && !action.parameters.role && !(action.parameters.role_ids?.length)) {
+                                        if (key !== 'role') return null;
+                                        return (
+                                          <div key="role-selector" className="flex flex-col col-span-1 md:col-span-2 mt-1">
+                                            <span className="text-[9px] text-amber-400 uppercase tracking-wider mb-2 flex items-center gap-1.5">
+                                              Rôle <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Requis</span>
+                                            </span>
+                                            <div className="grid grid-cols-2 gap-2">
+                                              {[
+                                                { id: 3, label: 'CEO' },
+                                                { id: 3, label: 'Chef de projet' },
+                                                { id: 4, label: 'Développeur' },
+                                                { id: 5, label: 'Rapporteur' },
+                                              ].map((opt, optIdx) => (
+                                                <label key={optIdx} className="flex items-center justify-center gap-2 cursor-pointer text-xs font-bold text-white bg-white/5 hover:bg-white/10 border border-white/10 hover:border-white/20 rounded-xl px-3 py-2.5 transition-all has-[:checked]:bg-gradient-to-r has-[:checked]:border-transparent">
+                                                  <input type="radio" name={`role_${idx}`} className="sr-only"
+                                                    onChange={() => { action.parameters.role = opt.label; action.parameters.role_ids = [opt.id]; }}
+                                                  />
+                                                  {opt.label}
+                                                </label>
+                                              ))}
+                                            </div>
+                                          </div>
+                                        )
+                                      }
+                                      // Pour add_project_member, masquer les champs role/role_ids après gestion ci-dessus
+                                      if (key === 'role' || key === 'role_ids') return null;
+                                    }
+
+                                    // ── CHAMPS role/role_ids pour les AUTRES actions ───────────────
+                                    if (key === 'role' && !isMissing) {
+                                      return (
+                                        <div key={key} className="flex flex-col">
+                                          <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Rôle</span>
+                                          <input type="text" readOnly defaultValue={String(value)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-white font-medium focus:outline-none" />
+                                        </div>
+                                      )
+                                    }
+
+                                    if (key === 'role_ids' && !isMissing && !action.parameters.role) {
+                                      const ROLE_NAMES: Record<number, string> = { 3: 'Chef de projet', 4: 'Développeur', 5: 'Rapporteur' };
+                                      const roleArr = Array.isArray(value) ? value : [value];
+                                      const roleLabel = roleArr.map((id: number) => ROLE_NAMES[id] || `Rôle ${id}`).join(', ');
+                                      return (
+                                        <div key={key} className="flex flex-col">
+                                          <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Rôle</span>
+                                          <input type="text" readOnly defaultValue={roleLabel} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-white font-medium focus:outline-none" />
                                         </div>
                                       )
                                     }
@@ -293,11 +420,55 @@ export default function Chat() {
                                       )
                                     }
 
-                                    if (key === 'subject' && !isMissing) {
+                                    if (key === 'issue_id' && !isMissing) {
                                       return (
-                                        <div key={key} className="flex flex-col col-span-1 md:col-span-2">
-                                          <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Sujet</span>
+                                        <div key={key} className="flex flex-col">
+                                          <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Ticket #</span>
                                           <input type="text" readOnly defaultValue={String(value)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                        </div>
+                                      )
+                                    }
+
+                                    if (key === 'identifier' && !isMissing) {
+                                      return (
+                                        <div key={key} className="flex flex-col">
+                                          <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Identifiant</span>
+                                          <input type="text" readOnly defaultValue={String(value)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                        </div>
+                                      )
+                                    }
+
+                                    // ── TRACKER_ID → nom lisible ───────────────────────────────────
+                                    if (key === 'tracker_id' && !isMissing) {
+                                      const TRACKER_NAMES: Record<number, { label: string; color: string }> = {
+                                        1: { label: 'Anomalie',  color: 'bg-red-500/20 text-red-400 border-red-500/30'     },
+                                        2: { label: 'Évolution', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30'  },
+                                        3: { label: 'Assistance',color: 'bg-teal-500/20 text-teal-400 border-teal-500/30'  },
+                                      };
+                                      const tracker = TRACKER_NAMES[Number(value)] || { label: String(value), color: 'bg-slate-500/20 text-slate-400 border-slate-500/30' };
+                                      return (
+                                        <div key={key} className="flex flex-col">
+                                          <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Type</span>
+                                          <div className={`border rounded-lg px-3 py-1.5 text-xs font-bold ${tracker.color}`}>{tracker.label}</div>
+                                        </div>
+                                      )
+                                    }
+
+                                    // ── STATUS_ID / ÉTAT_ID → nom lisible ─────────────────────────
+                                    if ((key === 'status_id' || key === 'état_id') && !isMissing) {
+                                      const STATUS_NAMES: Record<number, { label: string; color: string }> = {
+                                        1: { label: 'Nouveau',     color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' },
+                                        2: { label: 'En cours',    color: 'bg-blue-500/20 text-blue-400 border-blue-500/30'          },
+                                        3: { label: 'Résolu',      color: 'bg-violet-500/20 text-violet-400 border-violet-500/30'    },
+                                        4: { label: 'Commentaire', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30'       },
+                                        5: { label: 'Fermé',       color: 'bg-slate-500/20 text-slate-400 border-slate-500/30'       },
+                                        6: { label: 'Rejeté',      color: 'bg-red-500/20 text-red-400 border-red-500/30'             },
+                                      };
+                                      const status = STATUS_NAMES[Number(value)] || { label: String(value), color: 'bg-slate-500/20 text-slate-400 border-slate-500/30' };
+                                      return (
+                                        <div key={key} className="flex flex-col">
+                                          <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Statut</span>
+                                          <div className={`border rounded-lg px-3 py-1.5 text-xs font-bold ${status.color}`}>{status.label}</div>
                                         </div>
                                       )
                                     }
@@ -320,14 +491,14 @@ export default function Chat() {
                                           )
                                         }
                                       }
-                                      
+
                                       if (key === 'status_id') {
                                         if (isMissing) {
                                           return (
                                             <div key={key} className="flex flex-col col-span-1 md:col-span-2 mt-2">
                                               <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">Nouveau Statut <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
                                               <div className="flex flex-wrap gap-4">
-                                                {[ { id: 1, label: 'Nouveau' }, { id: 2, label: 'En cours' }, { id: 3, label: 'Résolu' }, { id: 4, label: 'Commentaire' }, { id: 5, label: 'Fermé' }, { id: 6, label: 'Rejeté' } ].map(opt => (
+                                                {[{ id: 1, label: 'Nouveau' }, { id: 2, label: 'En cours' }, { id: 3, label: 'Résolu' }, { id: 4, label: 'Commentaire' }, { id: 5, label: 'Fermé' }, { id: 6, label: 'Rejeté' }].map(opt => (
                                                   <label key={opt.id} className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
                                                     <input type="radio" name={`status_${idx}`} onChange={() => { action.parameters[key] = opt.id; }} className="accent-primary" /> {opt.label}
                                                   </label>
@@ -372,7 +543,7 @@ export default function Chat() {
                                             <div key={key} className="flex flex-col col-span-1 md:col-span-2 mt-2">
                                               <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">Type de tâche (Tracker) <span className={`px-1.5 py-0.5 rounded text-[8px] ${action.action_type === 'create_issue' ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'}`}>{action.action_type === 'create_issue' ? 'À compléter' : 'Optionnel'}</span></span>
                                               <div className="flex gap-4">
-                                                {[ { id: 1, label: 'Anomalie' }, { id: 2, label: 'Évolution' }, { id: 3, label: 'Assistance' } ].map(opt => (
+                                                {[{ id: 1, label: 'Anomalie' }, { id: 2, label: 'Évolution' }, { id: 3, label: 'Assistance' }].map(opt => (
                                                   <label key={opt.id} className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
                                                     <input type="radio" name={`tracker_${idx}`} onChange={() => { action.parameters[key] = opt.id; }} className="accent-primary" /> {opt.label}
                                                   </label>
@@ -397,7 +568,7 @@ export default function Chat() {
                                             <div key={key} className="flex flex-col col-span-1 md:col-span-2 mt-2">
                                               <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">Priorité <span className={`px-1.5 py-0.5 rounded text-[8px] ${action.action_type === 'create_issue' ? 'bg-red-500/20 text-red-400' : 'bg-amber-500/20 text-amber-400'}`}>{action.action_type === 'create_issue' ? 'À compléter' : 'Optionnel'}</span></span>
                                               <div className="flex flex-wrap gap-4">
-                                                {[ { id: 1, label: 'Bas' }, { id: 2, label: 'Normal' }, { id: 3, label: 'Haut' }, { id: 4, label: 'Urgent' }, { id: 5, label: 'Immédiat' } ].map(opt => (
+                                                {[{ id: 1, label: 'Bas' }, { id: 2, label: 'Normal' }, { id: 3, label: 'Haut' }, { id: 4, label: 'Urgent' }, { id: 5, label: 'Immédiat' }].map(opt => (
                                                   <label key={opt.id} className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
                                                     <input type="radio" name={`priority_${idx}`} onChange={() => { action.parameters[key] = opt.id; }} className="accent-primary" /> {opt.label}
                                                   </label>
@@ -444,7 +615,7 @@ export default function Chat() {
                                           )
                                         }
                                       }
-                                      
+
                                       if (key === 'subject' && isMissing) {
                                         if (action.action_type === 'create_issue') {
                                           return (
@@ -475,7 +646,7 @@ export default function Chat() {
                                           )
                                         }
                                       }
-                                      
+
                                       if (key === 'done_ratio') {
                                         if (isMissing) {
                                           return (
@@ -508,9 +679,9 @@ export default function Chat() {
                                     return (
                                       <div key={key} className="flex flex-col">
                                         <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">{key}</span>
-                                        <input 
-                                          type="text" 
-                                          defaultValue={typeof value === 'object' ? JSON.stringify(value) : String(value)} 
+                                        <input
+                                          type="text"
+                                          defaultValue={typeof value === 'object' ? JSON.stringify(value) : String(value)}
                                           className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50"
                                           onChange={(e) => { action.parameters[key] = e.target.value; }}
                                         />
@@ -523,18 +694,18 @@ export default function Chat() {
                           </div>
 
                           <div className="flex gap-3 mt-6">
-                            <Button 
-                              variant="outline" 
-                              className="flex-1 bg-transparent border-red-500/50 text-red-400 hover:bg-red-500/10"
+                            <Button
+                              variant="outline"
+                              className="flex-1 bg-transparent border-red-500/50 text-red-400 hover:bg-red-500/10 h-11 rounded-xl"
                               onClick={() => handleTaskExecution(msg.data.actions || [msg.data], i, false)}
                             >
-                               <XCircle className="w-4 h-4 mr-2" /> Tout Annuler
+                              <XCircle className="w-4 h-4 mr-2" /> Annuler
                             </Button>
-                            <Button 
-                              className="flex-1 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 border-none"
+                            <Button
+                              className="flex-1 bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 border-none h-11 rounded-xl"
                               onClick={() => handleTaskExecution(msg.data.actions || [msg.data], i, true)}
                             >
-                               <CheckCircle2 className="w-4 h-4 mr-2" /> Valider Tout
+                              <CheckCircle2 className="w-4 h-4 mr-2" /> Valider
                             </Button>
                           </div>
                         </div>
@@ -545,17 +716,17 @@ export default function Chat() {
                       <div className="mt-5 h-52 bg-slate-950/40 rounded-2xl p-5 border border-white/5 shadow-inner">
                         <ResponsiveContainer width="100%" height="100%">
                           <BarChart data={Object.entries(msg.data.time_by_user || {}).map(([user, time]) => ({ user, time: Number(time) }))} layout="vertical">
-                             <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" horizontal={false} />
-                             <XAxis type="number" hide />
-                             <YAxis dataKey="user" type="category" stroke="#94a3b8" fontSize={10} width={85} tickLine={false} axisLine={false} />
-                             <ChartTooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", boxShadow: "0 10px 30px rgba(0,0,0,0.5)" }} />
-                             <Bar dataKey="time" fill="url(#colorBar)" radius={[0, 6, 6, 0]} />
-                             <defs>
-                               <linearGradient id="colorBar" x1="0" y1="0" x2="1" y2="0">
-                                 <stop offset="0%" stopColor="#6366f1" />
-                                 <stop offset="100%" stopColor="#8b5cf6" />
-                               </linearGradient>
-                             </defs>
+                            <CartesianGrid strokeDasharray="3 3" stroke="#ffffff05" horizontal={false} />
+                            <XAxis type="number" hide />
+                            <YAxis dataKey="user" type="category" stroke="#94a3b8" fontSize={10} width={85} tickLine={false} axisLine={false} />
+                            <ChartTooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "12px", boxShadow: "0 10px 30px rgba(0,0,0,0.5)" }} />
+                            <Bar dataKey="time" fill="url(#colorBar)" radius={[0, 6, 6, 0]} />
+                            <defs>
+                              <linearGradient id="colorBar" x1="0" y1="0" x2="1" y2="0">
+                                <stop offset="0%" stopColor="#6366f1" />
+                                <stop offset="100%" stopColor="#8b5cf6" />
+                              </linearGradient>
+                            </defs>
                           </BarChart>
                         </ResponsiveContainer>
                       </div>
@@ -584,22 +755,22 @@ export default function Chat() {
 
         {/* Floating Input Bar */}
         <div className="p-6 md:p-10 pt-0 bg-gradient-to-t from-[#020617] via-[#020617]/90 to-transparent">
-          <form 
+          <form
             onSubmit={handleSendMessage}
             className="max-w-4xl mx-auto relative group"
           >
             <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 to-indigo-600/20 rounded-[30px] blur opacity-0 group-focus-within:opacity-100 transition duration-500" />
             <div className="relative">
-              <Input 
+              <Input
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={`Poser une question sur ${projectName}...`}
                 className="w-full h-16 pl-8 pr-20 bg-slate-900/60 backdrop-blur-2xl border-white/10 focus:border-primary/40 text-base rounded-[28px] shadow-[0_20px_50px_rgba(0,0,0,0.4)] transition-all font-sans placeholder:text-slate-500 focus:ring-0"
                 disabled={loading}
               />
-              <Button 
-                type="submit" 
-                size="icon" 
+              <Button
+                type="submit"
+                size="icon"
                 className="absolute right-3 top-3 h-10 w-10 rounded-[18px] bg-gradient-to-br from-red-600 to-rose-600 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-red-500/20"
                 disabled={loading || !input.trim()}
               >

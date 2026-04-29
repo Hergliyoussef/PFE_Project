@@ -9,7 +9,7 @@ import json
 
 from db.session import get_db
 from db.models import Message as DBMessage, Conversation as DBConv, User as DBUser
-from services.auth import get_current_user, require_authorized_role
+from services.auth import get_current_user, require_authorized_role, AUTHORIZED_ROLES
 from services.redmine_client import redmine, redmine_api_key_ctx, redmine_user_login_ctx
 from services.redis_client import (
     save_message, get_history,
@@ -106,12 +106,21 @@ async def chat(
     context_history = redis_history if redis_history else req.history
 
     try:
+        # Déterminer le rôle principal
+        user_roles = current_user.get("roles", [])
+        primary_role = "PROJECT_MANAGER"
+        if "CEO" in user_roles or current_user.get("is_admin"):
+            primary_role = "CEO"
+        elif "Manager" in user_roles:
+            primary_role = "PROJECT_MANAGER"
+
         from agents.supervisor_agent import run_agent
         result = run_agent(
             question=req.question,
             project_id=str(req.project_id),
             project_name=req.project_name or "",
             user_id=user_id_str,
+            user_role=primary_role,
             history=context_history or [],
         )
 
@@ -119,13 +128,7 @@ async def chat(
         answer = result.get("answer", "")
         agent_used = result.get("agent_used", "supervisor")
 
-        # Déterminer le rôle principal pour l'enregistrement
-        user_roles = current_user.get("roles", [])
-        primary_role = "PROJECT_MANAGER"
-        if "CEO" in user_roles or current_user.get("is_admin"):
-            primary_role = "CEO"
-        elif "Manager" in user_roles:
-            primary_role = "PROJECT_MANAGER"
+        # (primary_role déjà calculé plus haut)
 
         # 2. Formatage
         display_type = _get_display_type(intent, req.question)
@@ -207,12 +210,17 @@ async def execute_task(
         is_admin = current_user.get("is_admin", False)
         roles = current_user.get("roles", [])
         
-        # Contrôle d'accès : Le CEO a accès à tout. Pour les autres (Manager), on vérifie le projet ciblé.
+        # Contrôle d'accès strict
         if not (is_admin or "CEO" in roles):
+            # 1. Actions interdites au Project Manager
+            forbidden_actions = ["create_project", "delete_project", "create_user", "update_user", "delete_user"]
+            if req.action_type in forbidden_actions:
+                logger.warning(f"Tentative interdite : {req.action_type} par User {current_user.get('sub')} (PM)")
+                raise HTTPException(status_code=403, detail=f"Accès refusé : Seul le CEO peut effectuer l'action '{req.action_type}'.")
+
+            # 2. Vérification du projet cible pour les autres actions
             target_project_id = None
-            
-            # Déterminer le projet cible selon l'action
-            if req.action_type == "update_issue":
+            if req.action_type in ["update_issue", "delete_issue"]:
                 issue_id = req.parameters.get("issue_id")
                 if issue_id:
                     issue_data = redmine._get(f"/issues/{issue_id}.json")
@@ -221,24 +229,73 @@ async def execute_task(
                 target_project_id = str(req.parameters.get("project_id", ""))
                 
             if target_project_id and target_project_id.strip():
+                # --- RÉSOLUTION DE L'IDENTIFIANT ---
+                # Si on a un identifiant texte (ex: "shopflow"), on le convertit en ID (ex: "2")
+                if not target_project_id.isdigit():
+                    try:
+                        all_projects = redmine.get_projects()
+                        for p in all_projects:
+                            if p.get("identifier") == target_project_id:
+                                logger.info(f"[Auth] Résolution identifiant : {target_project_id} -> ID {p.get('id')}")
+                                target_project_id = str(p.get("id"))
+                                # Mettre à jour les paramètres pour l'exécution réelle
+                                req.parameters["project_id"] = target_project_id
+                                break
+                    except Exception as e:
+                        logger.error(f"[Auth] Erreur résolution projet : {e}")
+                # -----------------------------------
+
                 user_id = current_user.get("user_id")
                 # Récupérer les memberships en direct pour être sûr
-                user_data = redmine._get(f"/users/{user_id}.json", {"include": "memberships"})
+                # NOTE: /users/{id}.json?include=memberships nécessite des droits admin dans Redmine
+                user_data = redmine._get_admin(f"/users/{user_id}.json", {"include": "memberships"})
                 memberships = user_data.get("user", {}).get("memberships", [])
                 
                 is_authorized = False
+                logger.info(f"[Auth Debug] Vérification accès pour User {user_id} sur Projet {target_project_id}")
+                
                 for m in memberships:
                     p = m.get("project", {})
-                    # On compare par ID ou par Identifier (slug)
-                    if str(p.get("id")) == target_project_id or str(p.get("identifier")) == target_project_id:
-                        m_roles = [r.get("name", "") for r in m.get("roles", [])]
-                        if "Manager" in m_roles:
+                    p_id = str(p.get("id"))
+                    p_ident = str(p.get("identifier"))
+                    m_roles_raw = [r.get("name", "") for r in m.get("roles", [])]
+                    
+                    logger.info(f"[Auth Debug] Comparaison avec Projet {p_ident} ({p_id}) | Rôles: {m_roles_raw}")
+                    
+                    if p_id == target_project_id or p_ident == target_project_id:
+                        m_roles = {r.lower().strip() for r in m_roles_raw}
+                        allowed_roles = {r.lower().strip() for r in AUTHORIZED_ROLES}
+                        
+                        if m_roles & allowed_roles:
                             is_authorized = True
+                            logger.info("[Auth Debug] ACCÈS ACCORDÉ")
                             break
+                        else:
+                            logger.warning(f"[Auth Debug] Rôles insuffisants: {m_roles} vs {allowed_roles}")
                             
                 if not is_authorized:
-                    logger.warning(f"Tentative non autorisée : User {user_id} sur le projet {target_project_id}")
-                    raise HTTPException(status_code=403, detail="Accès refusé : Vous n'êtes pas Project Manager sur ce projet.")
+                    # Construction d'un message clair pour l'utilisateur
+                    access_summary = []
+                    for m in memberships:
+                        p = m.get("project", {})
+                        r = [role.get("name") for role in m.get("roles", [])]
+                        access_summary.append(f"{p.get('name')} ({p.get('identifier')}) → Rôles: {r}")
+                    
+                    # Message adapté selon l'action
+                    if req.action_type in ["add_project_member", "remove_project_member"]:
+                        error_msg = (
+                            f"Accès refusé : vous n'êtes pas Manager du projet '{target_project_id}'. "
+                            f"Un Chef de Projet ne peut gérer les membres que des projets dont il est lui-même Manager. "
+                            f"Vos projets : {access_summary}"
+                        )
+                    else:
+                        error_msg = (
+                            f"Accès refusé au projet '{target_project_id}'. "
+                            f"Vos projets autorisés : {access_summary}"
+                        )
+                    
+                    logger.warning(f"Tentative non autorisée : User {user_id} sur {target_project_id} ({req.action_type}). Accès : {access_summary}")
+                    raise HTTPException(status_code=403, detail=error_msg)
 
         api_key = current_user.get("api_key")
         result = redmine.execute_action(req.action_type, req.parameters, api_key=api_key)

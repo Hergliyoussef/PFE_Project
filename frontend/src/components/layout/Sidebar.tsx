@@ -112,11 +112,12 @@ export default function Sidebar({
 
   const filteredConversations = conversations.filter(c => c.project_id === activeProject)
 
-  // Détection ultra-robuste du rôle CEO
+  // Détection du rôle CEO
   const checkIsCEO = () => {
     if (!user) return false;
-    const hasCeoInList = user.roles?.some(r => r.toUpperCase().includes("CEO"));
-    const hasCeoInField = user.role?.toUpperCase().includes("CEO");
+    const CEO_ALIASES = ['CEO', 'ADMINISTRATOR', 'ADMIN'];
+    const hasCeoInList = user.roles?.some(r => CEO_ALIASES.some(alias => r.toUpperCase().includes(alias)));
+    const hasCeoInField = user.role ? CEO_ALIASES.some(alias => user.role!.toUpperCase().includes(alias)) : false;
     return !!(hasCeoInList || hasCeoInField);
   }
 

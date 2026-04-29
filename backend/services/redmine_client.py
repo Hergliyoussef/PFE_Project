@@ -28,52 +28,55 @@ class RedmineClient:
             "X-Redmine-API-Key": self.api_key,
             "Content-Type": "application/json",
         }
+        # Client persistant pour de meilleures perfs et timeouts unifiés
+        self.client = httpx.Client(
+            base_url=self.base_url,
+            headers=self.headers,
+            timeout=30.0,
+            follow_redirects=True,
+            limits=httpx.Limits(max_connections=20, max_keepalive_connections=5)
+        )
 
     def _get(self, path: str, params: dict = None, api_key: str = None, user_login: str = None) -> dict:
         """Méthode de base pour les requêtes GET avec gestion d'erreurs."""
-        url = f"{self.base_url}{path}"
-        headers = self.headers.copy()
+        headers = {}
         
-        # 1. Gestion de l'API Key (Priorité : argument direct > contextvar)
+        # 1. Gestion de l'API Key
         effective_key = api_key or redmine_api_key_ctx.get()
         if effective_key:
             headers["X-Redmine-API-Key"] = effective_key
             
-        # 2. Gestion de l'impersonnation (X-Redmine-Switch-User)
-        # On ne l'utilise que si on utilise la clé API Admin globale
-        # Si on utilise une clé spécifique à l'utilisateur, Redmine l'attribuera déjà correctement
+        # 2. Gestion de l'impersonnation
         effective_login = user_login or redmine_user_login_ctx.get()
         if effective_login and (not effective_key or effective_key == self.api_key):
             headers["X-Redmine-Switch-User"] = effective_login
             
         try:
-            r = httpx.get(url, headers=headers, params=params or {}, timeout=15)
+            r = self.client.get(path, headers=headers, params=params or {})
             r.raise_for_status()
             return r.json()
+        except httpx.TimeoutException:
+            logger.error(f"Redmine timeout (30s) — {path}")
+            raise Exception("Le serveur Redmine est trop lent à répondre. Veuillez réessayer.")
         except httpx.HTTPStatusError as e:
             logger.error(f"Redmine HTTP {e.response.status_code} — {path} : {e.response.text}")
-            # On propage l'erreur au lieu de renvoyer un dict vide qui fait planter la suite
             raise Exception(f"Erreur Redmine {e.response.status_code}: {e.response.text}")
         except Exception as e:
             logger.error(f"Redmine inaccessible — {e}")
             raise
 
     def _get_admin(self, path: str, params: dict = None) -> dict:
-        """
-        Requête GET utilisant TOUJOURS la clé API admin du serveur.
-        À utiliser pour les endpoints qui exigent des droits admin dans Redmine
-        (ex: /users.json, /users/{id}.json avec include=memberships).
-        """
-        url = f"{self.base_url}{path}"
-        # On ignore délibérément le contexte utilisateur et on utilise la clé admin globale
+        """Requête GET utilisant TOUJOURS la clé API admin."""
         headers = {
             "X-Redmine-API-Key": self.api_key,
-            "Content-Type": "application/json",
         }
         try:
-            r = httpx.get(url, headers=headers, params=params or {}, timeout=15)
+            r = self.client.get(path, headers=headers, params=params or {})
             r.raise_for_status()
             return r.json()
+        except httpx.TimeoutException:
+            logger.error(f"Redmine Admin timeout (30s) — {path}")
+            raise Exception("Le serveur Redmine est trop lent à répondre (Admin).")
         except httpx.HTTPStatusError as e:
             logger.error(f"Redmine Admin HTTP {e.response.status_code} — {path} : {e.response.text}")
             raise Exception(f"Erreur Redmine {e.response.status_code}: {e.response.text}")
@@ -82,9 +85,7 @@ class RedmineClient:
             raise
 
     def _post(self, path: str, payload: dict, api_key: str = None, user_login: str = None) -> dict:
-        url = f"{self.base_url}{path}"
-        headers = self.headers.copy()
-        
+        headers = {}
         effective_key = api_key or redmine_api_key_ctx.get()
         if effective_key:
             headers["X-Redmine-API-Key"] = effective_key
@@ -94,10 +95,12 @@ class RedmineClient:
             headers["X-Redmine-Switch-User"] = effective_login
             
         try:
-            r = httpx.post(url, headers=headers, json=payload, timeout=15)
+            r = self.client.post(path, headers=headers, json=payload)
             r.raise_for_status()
-            # Some Redmine POST responses might be empty (e.g. 201 Created without body)
             return r.json() if r.text else {}
+        except httpx.TimeoutException:
+            logger.error(f"Redmine POST timeout (30s) — {path}")
+            raise Exception("Délai d'attente dépassé lors de l'envoi des données à Redmine.")
         except httpx.HTTPStatusError as e:
             logger.error(f"Redmine HTTP POST {e.response.status_code} — {path} : {e.response.text}")
             raise Exception(f"Erreur Redmine: {e.response.text}")
@@ -106,9 +109,7 @@ class RedmineClient:
             raise
 
     def _delete(self, path: str, api_key: str = None, user_login: str = None) -> bool:
-        url = f"{self.base_url}{path}"
-        headers = self.headers.copy()
-        
+        headers = {}
         effective_key = api_key or redmine_api_key_ctx.get()
         if effective_key:
             headers["X-Redmine-API-Key"] = effective_key
@@ -118,9 +119,12 @@ class RedmineClient:
             headers["X-Redmine-Switch-User"] = effective_login
             
         try:
-            r = httpx.delete(url, headers=headers, timeout=15)
+            r = self.client.delete(path, headers=headers)
             r.raise_for_status()
             return True
+        except httpx.TimeoutException:
+            logger.error(f"Redmine DELETE timeout (30s) — {path}")
+            raise Exception("Délai d'attente dépassé lors de la suppression sur Redmine.")
         except httpx.HTTPStatusError as e:
             logger.error(f"Redmine HTTP DELETE {e.response.status_code} — {path} : {e.response.text}")
             raise Exception(f"Erreur Redmine: {e.response.text}")
@@ -129,9 +133,7 @@ class RedmineClient:
             raise
 
     def _put(self, path: str, payload: dict, api_key: str = None, user_login: str = None) -> bool:
-        url = f"{self.base_url}{path}"
-        headers = self.headers.copy()
-        
+        headers = {}
         effective_key = api_key or redmine_api_key_ctx.get()
         if effective_key:
             headers["X-Redmine-API-Key"] = effective_key
@@ -141,9 +143,12 @@ class RedmineClient:
             headers["X-Redmine-Switch-User"] = effective_login
             
         try:
-            r = httpx.put(url, headers=headers, json=payload, timeout=15)
+            r = self.client.put(path, headers=headers, json=payload)
             r.raise_for_status()
             return True
+        except httpx.TimeoutException:
+            logger.error(f"Redmine PUT timeout (30s) — {path}")
+            raise Exception("Délai d'attente dépassé lors de la mise à jour sur Redmine.")
         except httpx.HTTPStatusError as e:
             logger.error(f"Redmine HTTP PUT {e.response.status_code} — {path} : {e.response.text}")
             raise Exception(f"Erreur Redmine: {e.response.text}")
@@ -263,7 +268,17 @@ class RedmineClient:
                 "password": password
             }
         }
-        return self._post("/users.json", payload, api_key=api_key)
+        try:
+            return self._post("/users.json", payload, api_key=api_key)
+        except Exception as e:
+            # Si l'utilisateur a été créé entre temps ou si le mail est déjà pris
+            if "déjà utilisé" in str(e).lower() or "already taken" in str(e).lower():
+                logger.info(f"[Redmine] L'utilisateur {login} semble déjà exister (422).")
+                # On essaye de le retrouver pour renvoyer son ID
+                uid = self.get_user_id_by_fuzzy_search(login, api_key=api_key)
+                if uid:
+                    return {"user": {"id": int(uid), "login": login}, "already_exists": True}
+            raise
 
     def delete_user(self, user_id: str, api_key: str = None, **kwargs) -> bool:
         """Supprime un utilisateur (compte global) via ID ou Nom/Login."""
@@ -404,7 +419,13 @@ class RedmineClient:
                 "role_ids": final_role_ids
             }
         }
-        return self._post(f"/projects/{project_id}/memberships.json", payload, api_key=api_key)
+        try:
+            return self._post(f"/projects/{project_id}/memberships.json", payload, api_key=api_key)
+        except Exception as e:
+            if "déjà utilisé" in str(e).lower() or "already taken" in str(e).lower() or "422" in str(e):
+                logger.info(f"[Redmine] L'utilisateur {user_id} est déjà membre du projet {project_id}.")
+                return {"membership": {"user_id": user_id, "project_id": project_id}, "already_exists": True}
+            raise
 
     def remove_project_member(self, project_id: str, user_id: str, api_key: str = None, **kwargs) -> bool:
         """Retire un membre d'un projet (Compatible Project Manager)."""

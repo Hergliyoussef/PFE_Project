@@ -38,6 +38,8 @@ class ChatResponse(BaseModel):
     display_type:    str
     data:            dict
     conversation_id: str
+    user_message_id: Optional[int] = None
+    ai_message_id:   Optional[int] = None
 
 # ── LOGIQUE DE PERSISTENCE POSTGRES ───────────────────────────
 
@@ -74,9 +76,13 @@ def _save_to_postgres(db: Session, project_id: str, project_name: str, question:
         db.add(msg_user)
         db.add(msg_ai)
         db.commit()
+        db.refresh(msg_user)
+        db.refresh(msg_ai)
+        return msg_user.id, msg_ai.id
     except Exception as e:
         logger.error(f"[Postgres] Erreur : {e}")
         db.rollback()
+        return None, None
 
 # ── ROUTES API ────────────────────────────────────────────────
 
@@ -146,13 +152,15 @@ async def chat(
         # 3. Sauvegarde hybride (avec l'answer formatée)
         save_message(user_id_str, redis_key, "user", req.question)
         save_message(user_id_str, redis_key, "assistant", answer, intent=intent)
-        _save_to_postgres(db, req.project_id, req.project_name, req.question, answer, conv_id, user_id_str, primary_role)
+        user_msg_id, ai_msg_id = _save_to_postgres(db, req.project_id, req.project_name, req.question, answer, conv_id, user_id_str, primary_role)
 
         return ChatResponse(
             answer=answer, intent=intent,
             agent_used=agent_used, project_id=req.project_id,
             display_type=display_type, data=data,
-            conversation_id=conv_id
+            conversation_id=conv_id,
+            user_message_id=user_msg_id,
+            ai_message_id=ai_msg_id
         )
 
     except Exception as e:
@@ -170,6 +178,10 @@ async def get_permanent_history(
     user_id_str = current_user.get("sub")
     
     if conversation_id:
+        # Vérifier que la conversation appartient à l'utilisateur
+        conv = db.query(DBConv).filter(DBConv.id == conversation_id, DBConv.username == user_id_str).first()
+        if not conv:
+            raise HTTPException(status_code=404, detail="Conversation non trouvée ou non autorisée")
         conv_id = conversation_id
     else:
         # On cherche la dernière discussion de l'utilisateur pour ce projet
@@ -187,7 +199,7 @@ async def get_permanent_history(
     messages = db.query(DBMessage).filter(DBMessage.conversation_id == conv_id).order_by(DBMessage.created_at.asc()).all()
     
     return {
-        "history": [{"role": m.role, "content": m.content, "display_type": "text", "data": {}} for m in messages],
+        "history": [{"id": m.id, "role": m.role, "content": m.content, "display_type": "text", "data": {}} for m in messages],
         "conversation_id": conv_id
     }
 
@@ -311,10 +323,15 @@ async def execute_task(
 def _get_display_type(intent: str, question: str) -> str:
     q = question.lower()
     if intent == "planning": return "action_confirmation"
+    # Détecter si on parle de PLUSIEURS projets
+    if "projets" in q and any(k in q for k in ["retard", "overdue", "état", "status", "liste"]):
+        return "projects_table"
+    
     if any(k in q for k in ["gantt", "planning", "diagramme"]): return "gantt"
     if any(k in q for k in ["risque", "danger"]): return "risk_table"
     if any(k in q for k in ["charge", "équipe"]): return "workload"
     if any(k in q for k in ["retard", "overdue"]): return "issues_table"
+    if any(k in q for k in ["avancement", "progression", "taux", "kpi", "métrique", "metrique", "statistique", "chiffre"]): return "metrics_card"
     return {"risques": "risk_table"}.get(intent, "text")
 
 def _get_display_data(display_type: str, project_id: str) -> dict:
@@ -327,6 +344,26 @@ def _get_display_data(display_type: str, project_id: str) -> dict:
             return {"issues": redmine.get_issues(project_id, status="open")}
         elif display_type == "workload":
             return {"time_by_user": redmine.get_time_by_user(project_id)}
+        elif display_type == "issues_table":
+            return {"issues": redmine.get_overdue_issues(project_id)}
+        elif display_type == "projects_table":
+            # On utilise le nouvel outil global
+            projects = redmine.get_projects()
+            results = []
+            for p in projects:
+                try:
+                    m = redmine.compute_project_metrics(p["identifier"])
+                    results.append({
+                        "name": p["name"],
+                        "identifier": p["identifier"],
+                        "progress": m["avg_progress"],
+                        "overdue_issues": m["overdue_issues"],
+                        "critical_issues": m["critical_issues"]
+                    })
+                except: continue
+            return {"projects": sorted(results, key=lambda x: x["overdue_issues"], reverse=True)}
+        elif display_type == "metrics_card":
+            return redmine.compute_project_metrics(project_id)
         return {}
     except Exception:
         return {}
@@ -462,4 +499,46 @@ async def delete_conversation(
     except Exception as e:
         db.rollback()
         logger.error(f"[Conversations] Erreur suppression : {e}")
+        raise HTTPException(status_code=500, detail="Erreur lors de la suppression")
+
+@router.delete("/messages/{message_id}")
+async def delete_message(
+    message_id: int,
+    current_user: dict = Depends(require_authorized_role),
+    db: Session = Depends(get_db)
+):
+    user_id_str = current_user.get("sub")
+    
+    # On cherche le message en vérifiant qu'il appartient à une conversation de l'utilisateur
+    # On fait un join explicite pour garantir la sécurité
+    msg = (
+        db.query(DBMessage)
+        .join(DBConv, DBMessage.conversation_id == DBConv.id)
+        .filter(DBMessage.id == message_id)
+        .filter(DBConv.username == user_id_str)
+        .first()
+    )
+    
+    if not msg:
+        # Tentative de secours avec comparaison insensible à la casse
+        msg = (
+            db.query(DBMessage)
+            .join(DBConv, DBMessage.conversation_id == DBConv.id)
+            .filter(DBMessage.id == message_id)
+            .filter(DBConv.username.ilike(user_id_str))
+            .first()
+        )
+        
+    if not msg:
+        logger.warning(f"[Messages] Tentative de suppression échouée : Message {message_id} non trouvé pour {user_id_str}")
+        raise HTTPException(status_code=404, detail="Message non trouvé ou non autorisé")
+    
+    try:
+        db.delete(msg)
+        db.commit()
+        logger.info(f"[Messages] Message {message_id} supprimé par {user_id_str}")
+        return {"message": "Message supprimé avec succès"}
+    except Exception as e:
+        db.rollback()
+        logger.error(f"[Messages] Erreur suppression : {e}")
         raise HTTPException(status_code=500, detail="Erreur lors de la suppression")

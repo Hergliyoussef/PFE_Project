@@ -39,7 +39,14 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins      = ["http://localhost:8501", "http://localhost:5173", "http://localhost:3000", "http://pm_frontend"],
+    allow_origins      = [
+        "http://localhost:8501", 
+        "http://localhost:5173", 
+        "http://127.0.0.1:5173",
+        "http://localhost:3000", 
+        "http://127.0.0.1:3000",
+        "http://pm_frontend"
+    ],
     allow_methods      = ["*"],
     allow_headers      = ["*"],
     allow_credentials  = True,   # BUG 11 — nécessaire pour le header Authorization: Bearer

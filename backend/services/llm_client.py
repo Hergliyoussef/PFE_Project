@@ -83,12 +83,12 @@ def get_llm(agent: str = "supervisor"):
             return _groq(settings.llm_planning)
 
         elif agent == "rapporteur":
-            logger.info(f"[LLM] Rapporteur → OpenRouter '{settings.llm_rapporteur}'")
-            return _openrouter(settings.llm_rapporteur)
+            logger.info(f"[LLM] Rapporteur → Groq '{settings.llm_rapporteur}'")
+            return _groq(settings.llm_rapporteur)
 
         else:
-            logger.info(f"[LLM] Default/Fallback → OpenRouter '{settings.llm_fallback}'")
-            return _openrouter(settings.llm_fallback)
+            logger.info(f"[LLM] Default/Fallback → Groq '{settings.llm_fallback}'")
+            return _groq(settings.llm_fallback)
 
     except Exception as e:
         # Si le modèle principal échoue → bascule sur le modèle de secours
@@ -96,4 +96,4 @@ def get_llm(agent: str = "supervisor"):
             f"[LLM] Agent '{agent}' échoue ({str(e)[:50]}), "
             f"bascule sur {settings.llm_fallback}"
         )
-        return _openrouter(settings.llm_fallback)
+        return _groq(settings.llm_fallback)

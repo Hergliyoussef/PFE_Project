@@ -173,6 +173,32 @@ def classify_risk(project_id: str) -> str:
     except Exception as e:
         return json.dumps({"error": str(e)})
 
+@tool
+def get_all_projects_status() -> str:
+    """Retourne l'état de TOUS les projets : avancement, retards, et alertes."""
+    try:
+        projects = redmine.get_projects()
+        results = []
+        for p in projects:
+            try:
+                # Calcul rapide des métriques pour chaque projet
+                m = redmine.compute_project_metrics(p["identifier"])
+                results.append({
+                    "id": p["id"],
+                    "identifier": p["identifier"],
+                    "name": p["name"],
+                    "progress": m["avg_progress"],
+                    "overdue_issues": m["overdue_issues"],
+                    "critical_issues": m["critical_issues"]
+                })
+            except Exception:
+                continue
+        # Trier par nombre de retards
+        results.sort(key=lambda x: x["overdue_issues"], reverse=True)
+        return json.dumps(results, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
 
 
 @tool
@@ -203,11 +229,11 @@ def delete_project_conversations(project_id: str, user_id: int) -> str:
 ALL_TOOLS = [
     get_project_metrics, get_overdue_issues, get_critical_path,
     get_velocity_trend, get_member_performance, classify_risk,
-    delete_project_conversations
+    delete_project_conversations, get_all_projects_status
 ]
 
 ANALYSE_TOOLS = ALL_TOOLS
 DECISION_TOOLS = [get_critical_path, get_velocity_trend, classify_risk, get_member_performance]
 
 # Liste pour l'agent Rapporteur (Synthèse et métriques)
-RAPPORTEUR_TOOLS = [get_project_metrics, get_overdue_issues, get_velocity_trend, classify_risk, delete_project_conversations]
+RAPPORTEUR_TOOLS = [get_project_metrics, get_overdue_issues, get_velocity_trend, classify_risk, delete_project_conversations, get_all_projects_status]

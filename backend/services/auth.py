@@ -76,7 +76,7 @@ async def authenticate_with_redmine(login: str, password: str) -> Optional[dict]
         None          — mauvais identifiants ou erreur réseau
     """
     try:
-        async with httpx.AsyncClient(timeout=8) as client:
+        async with httpx.AsyncClient(timeout=50) as client:
             response = await client.get(
                 f"{settings.redmine_url}/users/current.json",
                 params={"include": "memberships"},   # ← récupère les rôles Redmine
@@ -139,7 +139,7 @@ async def authenticate_with_redmine(login: str, password: str) -> Optional[dict]
         email = user.get("mail") or user.get("email")
         if not email and settings.redmine_api_key:
             try:
-                async with httpx.AsyncClient(timeout=5) as admin_client:
+                async with httpx.AsyncClient(timeout=50) as admin_client:
                     admin_resp = await admin_client.get(
                         f"{settings.redmine_url}/users/{user.get('id')}.json",
                         headers={"X-Redmine-API-Key": settings.redmine_api_key}

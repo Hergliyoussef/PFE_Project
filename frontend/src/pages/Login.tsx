@@ -28,11 +28,15 @@ export default function Login() {
       const { access_token, user } = response.data
       
       // Stockage sécurisé
+      // Stockage sécurisé
       Cookies.set("pm_chatbot_access_token", access_token, { expires: 1/24 }) // 1h
+      localStorage.removeItem("pm_last_conv_id") // Reset chat pour le nouvel utilisateur
       localStorage.setItem("pm_user", JSON.stringify(user))
       
       if (user.authorized_projects?.length > 0) {
         localStorage.setItem("pm_active_project", user.authorized_projects[0].identifier)
+      } else {
+        localStorage.removeItem("pm_active_project")
       }
 
       toast.success(`Bienvenue, ${user.firstname} !`)

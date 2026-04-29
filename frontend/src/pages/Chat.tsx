@@ -3,13 +3,14 @@ import Sidebar from "@/components/layout/Sidebar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Send, Loader2, Bot, User as UserIcon, CheckCircle2, XCircle } from "lucide-react"
+import { Send, Loader2, Bot, User as UserIcon, CheckCircle2, XCircle, AlertTriangle, Clock, Calendar, Shield, BarChart3, Trophy, Target, Zap, Trash2 } from "lucide-react"
 import api from "@/api/api"
 import ReactMarkdown from "react-markdown"
 import { toast } from "sonner"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as ChartTooltip } from "recharts"
 
 interface Message {
+  id?: number
   role: "user" | "assistant"
   content: string
   display_type?: string
@@ -94,14 +95,23 @@ export default function Chat() {
       })
 
       const botMessage: Message = {
+        id: response.data.ai_message_id,
         role: "assistant",
         content: response.data.answer || response.data.final_answer,
         display_type: response.data.display_type,
         data: response.data.data
       }
-      setMessages(prev => [...prev, botMessage])
+      
+      // Mettre à jour le message utilisateur avec son ID
+      setMessages(prev => {
+        const newMsgs = [...prev];
+        if (newMsgs.length > 0) {
+          newMsgs[newMsgs.length - 1].id = response.data.user_message_id;
+        }
+        return [...newMsgs, botMessage];
+      });
 
-      if (response.data.conversation_id && !activeConvId) {
+      if (response.data.conversation_id) {
         setActiveConvId(response.data.conversation_id)
         localStorage.setItem("pm_last_conv_id", response.data.conversation_id)
       }
@@ -112,24 +122,50 @@ export default function Chat() {
     }
   }
 
-  const handleSelectConv = async (id: string) => {
+  const handleSelectConv = async (convId: string) => {
     const activeProject = localStorage.getItem("pm_active_project")
     if (!activeProject) return
-
-    setActiveConvId(id)
-    localStorage.setItem("pm_last_conv_id", id)
-    setMessages([])
+    setActiveConvId(convId)
+    localStorage.setItem("pm_last_conv_id", convId)
     setLoading(true)
     try {
-      const response = await api.get(`/history/${activeProject}`, {
-        params: { conversation_id: id }
-      })
-      setMessages(response.data.history || [])
-    } catch (err) {
-      console.error("Erreur historique", err)
-      toast.error("Impossible de charger l'historique.")
+      const res = await api.get(`/history/${activeProject}?conversation_id=${convId}`)
+      setMessages(res.data.history || [])
+    } catch (e) {
+      console.error("Erreur historique", e)
+      setMessages([])
+      setActiveConvId(undefined)
+      localStorage.removeItem("pm_last_conv_id")
+      toast.error("Impossible de charger l'historique")
     } finally {
       setLoading(false)
+    }
+  }
+
+  const handleDeleteMessage = async (msgId?: number) => {
+    if (!msgId) return;
+    try {
+      await api.delete(`/messages/${msgId}`);
+      setMessages(prev => prev.filter(m => m.id !== msgId));
+      toast.success("Message supprimé");
+    } catch (e) {
+      console.error("Erreur suppression message", e);
+      toast.error("Erreur lors de la suppression");
+    }
+  }
+
+  const handleClearChat = async () => {
+    if (!activeConvId) return;
+    if (!confirm("Voulez-vous vraiment supprimer toute cette conversation ?")) return;
+    try {
+      await api.delete(`/conversations/${activeConvId}`);
+      setMessages([]);
+      setActiveConvId(undefined);
+      localStorage.removeItem("pm_last_conv_id");
+      toast.success("Conversation supprimée");
+    } catch (e) {
+      console.error("Erreur suppression conversation", e);
+      toast.error("Erreur lors de la suppression");
     }
   }
 
@@ -196,8 +232,8 @@ export default function Chat() {
           </div>
           <div className="flex items-center gap-4">
             <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${localStorage.getItem("pm_user") && (JSON.parse(localStorage.getItem("pm_user")!).roles?.some((r: string) => r.toUpperCase().includes("CEO")) || JSON.parse(localStorage.getItem("pm_user")!).role?.toUpperCase().includes("CEO"))
-                ? "bg-primary/10 border-primary/20 text-primary"
-                : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+              ? "bg-primary/10 border-primary/20 text-primary"
+              : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
               }`}>
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse" />
               <span className="text-[10px] font-black uppercase tracking-[0.2em]">
@@ -207,6 +243,18 @@ export default function Chat() {
                 }
               </span>
             </div>
+            
+            {activeConvId && (
+              <Button 
+                variant="ghost" 
+                size="icon" 
+                onClick={handleClearChat}
+                className="w-9 h-9 rounded-xl text-slate-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                title="Supprimer la conversation"
+              >
+                <Trash2 className="w-4 h-4" />
+              </Button>
+            )}
           </div>
         </header>
 
@@ -232,8 +280,8 @@ export default function Chat() {
             {messages.map((msg, i) => (
               <div key={i} className={`flex gap-5 animate-in slide-in-from-bottom-6 duration-500 ${msg.role === "assistant" ? "flex-row items-start" : "flex-row-reverse items-start"}`}>
                 <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-2xl transition-transform hover:scale-105 ${msg.role === "assistant"
-                    ? "bg-gradient-to-br from-primary to-indigo-600 text-white"
-                    : "bg-slate-800 text-slate-300 border border-white/10"
+                  ? "bg-gradient-to-br from-primary to-indigo-600 text-white"
+                  : "bg-slate-800 text-slate-300 border border-white/10"
                   }`}>
                   {msg.role === "assistant" ? <Bot className="w-5.5 h-5.5" /> : <UserIcon className="w-5.5 h-5.5" />}
                 </div>
@@ -246,11 +294,21 @@ export default function Chat() {
                   </div>
 
                   <div className={`px-6 py-4 rounded-[24px] shadow-2xl relative overflow-hidden transition-all hover:shadow-primary/5 ${msg.role === "assistant"
-                      ? "bg-white/[0.04] backdrop-blur-xl border border-white/5 text-slate-200"
-                      : "bg-gradient-to-br from-indigo-600 to-primary text-white border border-white/10 rounded-tr-none"
+                    ? "bg-white/[0.04] backdrop-blur-xl border border-white/5 text-slate-200"
+                    : "bg-gradient-to-br from-indigo-600 to-primary text-white border border-white/10 rounded-tr-none"
                     }`}>
-                    <div className="text-sm leading-relaxed prose prose-invert prose-p:my-0 prose-pre:bg-slate-950/50 prose-pre:border prose-pre:border-white/10 max-w-none">
+                    <div className="text-sm leading-relaxed prose prose-invert prose-p:my-0 prose-pre:bg-slate-950/50 prose-pre:border prose-pre:border-white/10 max-w-none pr-6 group relative">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      
+                      {msg.id && (
+                        <button 
+                          onClick={() => handleDeleteMessage(msg.id)}
+                          className="absolute top-0 -right-2 p-1 text-slate-500 hover:text-red-400 opacity-0 group-hover:opacity-100 transition-all"
+                          title="Supprimer ce message"
+                        >
+                          <Trash2 className="w-3 h-3" />
+                        </button>
+                      )}
                     </div>
 
                     {msg.display_type === "action_confirmation" && msg.data && (msg.data.action_type || msg.data.actions) && (
@@ -279,11 +337,11 @@ export default function Chat() {
                                     // ── RENDU SPÉCIAL POUR CREATE_USER (DOIT ÊTRE EN PREMIER) ─────
                                     if (action.action_type === 'create_user') {
                                       const USER_CREATE_FIELDS: Record<string, { label: string; type: string; placeholder: string }> = {
-                                        firstname: { label: 'Prénom',       type: 'text',     placeholder: 'Ex: Ismail'           },
-                                        lastname:  { label: 'Nom',          type: 'text',     placeholder: 'Ex: Benhaddou'        },
-                                        login:     { label: 'Identifiant',  type: 'text',     placeholder: 'Ex: ismail.benhaddou' },
-                                        mail:      { label: 'Email',        type: 'email',    placeholder: 'Ex: ismail@pfe.local' },
-                                        password:  { label: 'Mot de passe', type: 'password', placeholder: 'Min. 8 caractères'    },
+                                        firstname: { label: 'Prénom', type: 'text', placeholder: 'Ex: Ismail' },
+                                        lastname: { label: 'Nom', type: 'text', placeholder: 'Ex: Benhaddou' },
+                                        login: { label: 'Identifiant', type: 'text', placeholder: 'Ex: ismail.benhaddou' },
+                                        mail: { label: 'Email', type: 'email', placeholder: 'Ex: ismail@pfe.local' },
+                                        password: { label: 'Mot de passe', type: 'password', placeholder: 'Min. 8 caractères' },
                                       };
                                       if (key in USER_CREATE_FIELDS) {
                                         const fieldDef = USER_CREATE_FIELDS[key];
@@ -310,7 +368,7 @@ export default function Chat() {
                                     if (key === 'password') return null;
 
                                     // Masquer les champs techniques ou redondants
-                                    const HIDDEN_FIELDS = ['utilisateur', 'firstname', 'lastname', 'mail', 'login', 'password'];
+                                    const HIDDEN_FIELDS = ['firstname', 'lastname', 'mail', 'login', 'password'];
                                     if (HIDDEN_FIELDS.includes(key)) return null;
 
                                     if (key === 'project_id' && !isMissing) {
@@ -349,7 +407,7 @@ export default function Chat() {
                                         )
                                       }
                                       if (key === 'role_ids' && !isMissing && !action.parameters.role) {
-                                        const ROLE_NAMES: Record<number, string> = { 3: 'Chef de projet', 4: 'Développeur', 5: 'Rapporteur' };
+                                        const ROLE_NAMES: Record<number, string> = { 3: 'Chef de projet', 4: 'Développeur', 5: 'Rapporteur', 6: 'CEO' };
                                         const roleArr = Array.isArray(value) ? value : [value];
                                         const roleLabel = roleArr.map((id: number) => ROLE_NAMES[id] || `Rôle ${id}`).join(', ');
                                         return (
@@ -369,7 +427,7 @@ export default function Chat() {
                                             </span>
                                             <div className="grid grid-cols-2 gap-2">
                                               {[
-                                                { id: 3, label: 'CEO' },
+                                                { id: 6, label: 'CEO' },
                                                 { id: 3, label: 'Chef de projet' },
                                                 { id: 4, label: 'Développeur' },
                                                 { id: 5, label: 'Rapporteur' },
@@ -400,7 +458,7 @@ export default function Chat() {
                                     }
 
                                     if (key === 'role_ids' && !isMissing && !action.parameters.role) {
-                                      const ROLE_NAMES: Record<number, string> = { 3: 'Chef de projet', 4: 'Développeur', 5: 'Rapporteur' };
+                                      const ROLE_NAMES: Record<number, string> = { 3: 'Chef de projet', 4: 'Développeur', 5: 'Rapporteur', 6: 'CEO' };
                                       const roleArr = Array.isArray(value) ? value : [value];
                                       const roleLabel = roleArr.map((id: number) => ROLE_NAMES[id] || `Rôle ${id}`).join(', ');
                                       return (
@@ -411,7 +469,7 @@ export default function Chat() {
                                       )
                                     }
 
-                                    if (key === 'user_id' && !isMissing) {
+                                    if ((key === 'user_id' || key === 'utilisateur') && !isMissing) {
                                       return (
                                         <div key={key} className="flex flex-col">
                                           <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Assigné à</span>
@@ -441,9 +499,9 @@ export default function Chat() {
                                     // ── TRACKER_ID → nom lisible ───────────────────────────────────
                                     if (key === 'tracker_id' && !isMissing) {
                                       const TRACKER_NAMES: Record<number, { label: string; color: string }> = {
-                                        1: { label: 'Anomalie',  color: 'bg-red-500/20 text-red-400 border-red-500/30'     },
-                                        2: { label: 'Évolution', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30'  },
-                                        3: { label: 'Assistance',color: 'bg-teal-500/20 text-teal-400 border-teal-500/30'  },
+                                        1: { label: 'Anomalie', color: 'bg-red-500/20 text-red-400 border-red-500/30' },
+                                        2: { label: 'Évolution', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
+                                        3: { label: 'Assistance', color: 'bg-teal-500/20 text-teal-400 border-teal-500/30' },
                                       };
                                       const tracker = TRACKER_NAMES[Number(value)] || { label: String(value), color: 'bg-slate-500/20 text-slate-400 border-slate-500/30' };
                                       return (
@@ -457,12 +515,12 @@ export default function Chat() {
                                     // ── STATUS_ID / ÉTAT_ID → nom lisible ─────────────────────────
                                     if ((key === 'status_id' || key === 'état_id') && !isMissing) {
                                       const STATUS_NAMES: Record<number, { label: string; color: string }> = {
-                                        1: { label: 'Nouveau',     color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' },
-                                        2: { label: 'En cours',    color: 'bg-blue-500/20 text-blue-400 border-blue-500/30'          },
-                                        3: { label: 'Résolu',      color: 'bg-violet-500/20 text-violet-400 border-violet-500/30'    },
-                                        4: { label: 'Commentaire', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30'       },
-                                        5: { label: 'Fermé',       color: 'bg-slate-500/20 text-slate-400 border-slate-500/30'       },
-                                        6: { label: 'Rejeté',      color: 'bg-red-500/20 text-red-400 border-red-500/30'             },
+                                        1: { label: 'Nouveau', color: 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30' },
+                                        2: { label: 'En cours', color: 'bg-blue-500/20 text-blue-400 border-blue-500/30' },
+                                        3: { label: 'Résolu', color: 'bg-violet-500/20 text-violet-400 border-violet-500/30' },
+                                        4: { label: 'Commentaire', color: 'bg-amber-500/20 text-amber-400 border-amber-500/30' },
+                                        5: { label: 'Fermé', color: 'bg-slate-500/20 text-slate-400 border-slate-500/30' },
+                                        6: { label: 'Rejeté', color: 'bg-red-500/20 text-red-400 border-red-500/30' },
                                       };
                                       const status = STATUS_NAMES[Number(value)] || { label: String(value), color: 'bg-slate-500/20 text-slate-400 border-slate-500/30' };
                                       return (
@@ -598,7 +656,10 @@ export default function Chat() {
                                         }
                                       }
 
-                                      if (key === 'user_id' && isMissing) {
+                                      if ((key === 'user_id' || key === 'utilisateur') && isMissing) {
+                                        const otherValue = action.parameters[key === 'user_id' ? 'utilisateur' : 'user_id'];
+                                        if (otherValue && otherValue !== "") return null;
+
                                         if (action.action_type === 'create_issue') {
                                           return (
                                             <div key={key} className="flex flex-col">
@@ -729,6 +790,248 @@ export default function Chat() {
                             </defs>
                           </BarChart>
                         </ResponsiveContainer>
+                      </div>
+                    )}
+
+                    {msg.display_type === "issues_table" && msg.data && msg.data.issues && (
+                      <div className="mt-5 overflow-hidden bg-slate-950/40 rounded-2xl border border-white/5 shadow-2xl">
+                        <div className="p-4 bg-red-500/10 border-b border-white/5 flex items-center gap-2">
+                          <AlertTriangle className="w-4 h-4 text-red-500" />
+                          <h4 className="text-xs font-black uppercase tracking-widest text-red-400">Tâches en Retard</h4>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-[11px]">
+                            <thead>
+                              <tr className="border-b border-white/5 bg-white/5">
+                                <th className="px-4 py-3 font-black uppercase tracking-tighter text-slate-500">ID</th>
+                                <th className="px-4 py-3 font-black uppercase tracking-tighter text-slate-500">Sujet</th>
+                                <th className="px-4 py-3 font-black uppercase tracking-tighter text-slate-500">Échéance</th>
+                                <th className="px-4 py-3 font-black uppercase tracking-tighter text-slate-500">Assigné</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/5">
+                              {msg.data.issues.map((issue: any) => (
+                                <tr key={issue.id} className="hover:bg-white/5 transition-colors group">
+                                  <td className="px-4 py-3 font-mono text-primary">#{issue.id}</td>
+                                  <td className="px-4 py-3 font-bold text-slate-200">{issue.subject}</td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-1.5 text-red-400 font-bold">
+                                      <Clock className="w-3 h-3" />
+                                      {issue.due_date || "N/A"}
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 text-slate-400 group-hover:text-slate-200 transition-colors">{issue.assigned_to?.name || "Non assigné"}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {msg.display_type === "risk_table" && msg.data && msg.data.issues && (
+                      <div className="mt-5 overflow-hidden bg-slate-950/40 rounded-2xl border border-white/5 shadow-2xl">
+                        <div className="p-4 bg-amber-500/10 border-b border-white/5 flex items-center gap-2">
+                          <Shield className="w-4 h-4 text-amber-500" />
+                          <h4 className="text-xs font-black uppercase tracking-widest text-amber-400">Analyse des Risques</h4>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-[11px]">
+                            <thead>
+                              <tr className="border-b border-white/5 bg-white/5">
+                                <th className="px-4 py-3 font-black uppercase tracking-tighter text-slate-500">Tâche</th>
+                                <th className="px-4 py-3 font-black uppercase tracking-tighter text-slate-500">Priorité</th>
+                                <th className="px-4 py-3 font-black uppercase tracking-tighter text-slate-500">Statut</th>
+                                <th className="px-4 py-3 font-black uppercase tracking-tighter text-slate-500">Progrès</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/5">
+                              {msg.data.issues.map((issue: any) => (
+                                <tr key={issue.id} className="hover:bg-white/5 transition-colors">
+                                  <td className="px-4 py-3">
+                                    <div className="font-bold text-slate-200">{issue.subject}</div>
+                                    <div className="text-[9px] text-slate-500 font-mono mt-0.5">#{issue.id}</div>
+                                  </td>
+                                  <td className="px-4 py-3">
+                                    <span className={`px-2 py-0.5 rounded-full font-black uppercase tracking-tighter text-[9px] ${issue.priority?.name?.toLowerCase().includes('urgent') ? 'bg-red-500/20 text-red-400' :
+                                        issue.priority?.name?.toLowerCase().includes('haut') ? 'bg-amber-500/20 text-amber-400' :
+                                          'bg-slate-500/20 text-slate-400'
+                                      }`}>
+                                      {issue.priority?.name}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-slate-400">{issue.status?.name}</td>
+                                  <td className="px-4 py-3">
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                        <div className={`h-full ${issue.done_ratio > 70 ? 'bg-emerald-500' : issue.done_ratio > 30 ? 'bg-amber-500' : 'bg-red-500'}`} style={{ width: `${issue.done_ratio}%` }}></div>
+                                      </div>
+                                      <span className="font-mono text-[10px] text-slate-400">{issue.done_ratio}%</span>
+                                    </div>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {msg.display_type === "projects_table" && msg.data && msg.data.projects && (
+                      <div className="mt-5 overflow-hidden bg-slate-950/40 rounded-2xl border border-white/5 shadow-2xl">
+                        <div className="p-4 bg-primary/10 border-b border-white/5 flex items-center gap-2">
+                          <BarChart3 className="w-4 h-4 text-primary" />
+                          <h4 className="text-xs font-black uppercase tracking-widest text-white">État Global des Projets</h4>
+                        </div>
+                        <div className="overflow-x-auto">
+                          <table className="w-full text-left text-[11px]">
+                            <thead>
+                              <tr className="border-b border-white/5 bg-white/5">
+                                <th className="px-4 py-3 font-black uppercase tracking-tighter text-slate-500">Projet</th>
+                                <th className="px-4 py-3 font-black uppercase tracking-tighter text-slate-500 text-center">Avancement</th>
+                                <th className="px-4 py-3 font-black uppercase tracking-tighter text-slate-500 text-center">Retards</th>
+                                <th className="px-4 py-3 font-black uppercase tracking-tighter text-slate-500 text-center">Critiques</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-white/5">
+                              {msg.data.projects.map((proj: any) => (
+                                <tr key={proj.identifier} className="hover:bg-white/5 transition-colors group">
+                                  <td className="px-4 py-3">
+                                    <div className="font-bold text-slate-200">{proj.name}</div>
+                                    <div className="text-[9px] text-slate-500 font-mono mt-0.5">{proj.identifier}</div>
+                                  </td>
+                                  <td className="px-4 py-3 w-40">
+                                    <div className="flex items-center gap-2">
+                                      <div className="flex-1 h-1.5 bg-white/5 rounded-full overflow-hidden">
+                                        <div className="h-full bg-primary" style={{ width: `${proj.progress}%` }}></div>
+                                      </div>
+                                      <span className="font-mono text-[10px] text-slate-400">{Math.round(proj.progress)}%</span>
+                                    </div>
+                                  </td>
+                                  <td className="px-4 py-3 text-center">
+                                    <span className={`px-2 py-1 rounded-lg font-black ${proj.overdue_issues > 0 ? 'bg-red-500/20 text-red-400' : 'bg-emerald-500/20 text-emerald-400'}`}>
+                                      {proj.overdue_issues}
+                                    </span>
+                                  </td>
+                                  <td className="px-4 py-3 text-center">
+                                    <span className={`px-2 py-1 rounded-lg font-black ${proj.critical_issues > 0 ? 'bg-rose-600/30 text-rose-500 animate-pulse' : 'bg-slate-500/10 text-slate-500'}`}>
+                                      {proj.critical_issues}
+                                    </span>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {msg.display_type === "metrics_card" && msg.data && (
+                      <div className="mt-5 grid grid-cols-1 md:grid-cols-2 gap-4">
+                        {/* Progress Card */}
+                        <div className="bg-gradient-to-br from-indigo-600/20 to-primary/20 backdrop-blur-xl border border-white/10 rounded-[32px] p-6 shadow-2xl relative overflow-hidden group">
+                          <div className="absolute top-0 right-0 p-4 opacity-10 group-hover:opacity-20 transition-opacity">
+                            <Trophy className="w-20 h-20 text-white" />
+                          </div>
+                          <div className="relative">
+                            <div className="flex items-center gap-3 mb-4">
+                              <div className="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center">
+                                <Target className="w-5 h-5 text-primary" />
+                              </div>
+                              <h4 className="text-sm font-black uppercase tracking-widest text-white">Avancement Global</h4>
+                            </div>
+                            <div className="flex items-end gap-2 mb-2">
+                              <span className="text-4xl font-black text-white">{Math.round(msg.data.avg_progress || 0)}%</span>
+                              <span className="text-xs text-slate-400 mb-1.5 font-bold uppercase tracking-widest">Terminé</span>
+                            </div>
+                            <div className="h-3 bg-white/5 rounded-full overflow-hidden p-0.5 border border-white/5">
+                              <div className="h-full bg-gradient-to-r from-primary to-indigo-400 rounded-full shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-1000" style={{ width: `${msg.data.avg_progress || 0}%` }} />
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Stats Grid */}
+                        <div className="grid grid-cols-2 gap-4">
+                          <div className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-3xl p-5 flex flex-col justify-between hover:bg-white/5 transition-all">
+                            <div className="flex items-center justify-between">
+                              <div className="w-8 h-8 bg-red-500/10 rounded-lg flex items-center justify-center">
+                                <Clock className="w-4 h-4 text-red-500" />
+                              </div>
+                              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Retards</span>
+                            </div>
+                            <div className="mt-4">
+                              <div className="text-2xl font-black text-white">{msg.data.overdue_issues || 0}</div>
+                              <div className="text-[10px] text-red-400 font-bold uppercase mt-1">Tâches échues</div>
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-3xl p-5 flex flex-col justify-between hover:bg-white/5 transition-all">
+                            <div className="flex items-center justify-between">
+                              <div className="w-8 h-8 bg-amber-500/10 rounded-lg flex items-center justify-center">
+                                <Zap className="w-4 h-4 text-amber-500" />
+                              </div>
+                              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Critique</span>
+                            </div>
+                            <div className="mt-4">
+                              <div className="text-2xl font-black text-white">{msg.data.critical_issues || 0}</div>
+                              <div className="text-[10px] text-amber-400 font-bold uppercase mt-1">Priorité Haute</div>
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-3xl p-5 flex flex-col justify-between hover:bg-white/5 transition-all">
+                            <div className="flex items-center justify-between">
+                              <div className="w-8 h-8 bg-emerald-500/10 rounded-lg flex items-center justify-center">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-500" />
+                              </div>
+                              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Terminé</span>
+                            </div>
+                            <div className="mt-4">
+                              <div className="text-2xl font-black text-white">{msg.data.done_issues || 0}</div>
+                              <div className="text-[10px] text-emerald-400 font-bold uppercase mt-1">Total clos</div>
+                            </div>
+                          </div>
+
+                          <div className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-3xl p-5 flex flex-col justify-between hover:bg-white/5 transition-all">
+                            <div className="flex items-center justify-between">
+                              <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center">
+                                <BarChart3 className="w-4 h-4 text-primary" />
+                              </div>
+                              <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total</span>
+                            </div>
+                            <div className="mt-4">
+                              <div className="text-2xl font-black text-white">{msg.data.total_issues || 0}</div>
+                              <div className="text-[10px] text-primary font-bold uppercase mt-1">Tâches totales</div>
+                            </div>
+                          </div>
+                        </div>
+                      </div>
+                    )}
+
+                    {msg.display_type === "gantt" && msg.data && msg.data.issues && (
+                      <div className="mt-5 overflow-hidden bg-slate-950/40 rounded-2xl border border-white/5 shadow-2xl">
+                        <div className="p-4 bg-primary/10 border-b border-white/5 flex items-center gap-2">
+                          <Calendar className="w-4 h-4 text-primary" />
+                          <h4 className="text-xs font-black uppercase tracking-widest text-white">Chronologie du Projet</h4>
+                        </div>
+                        <div className="p-5 space-y-4">
+                          {msg.data.issues.slice(0, 10).map((issue: any) => (
+                            <div key={issue.id} className="space-y-1.5">
+                              <div className="flex justify-between text-[10px]">
+                                <span className="font-bold text-slate-300">#{issue.id} {issue.subject}</span>
+                                <span className="text-slate-500 font-mono">{issue.start_date || "?"} → {issue.due_date || "?"}</span>
+                              </div>
+                              <div className="relative h-2 bg-white/5 rounded-full overflow-hidden">
+                                <div
+                                  className="absolute h-full bg-gradient-to-r from-primary to-indigo-500 rounded-full"
+                                  style={{
+                                    width: `${issue.done_ratio || 0}%`,
+                                    left: '0%'
+                                  }}
+                                />
+                              </div>
+                            </div>
+                          ))}
+                        </div>
                       </div>
                     )}
                   </div>

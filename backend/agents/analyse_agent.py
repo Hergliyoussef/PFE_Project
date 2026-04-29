@@ -29,7 +29,9 @@ Outils disponibles :
 - get_sprint_status       → état des sprints
 - classify_risk           → score de risque (0->1)
 
-Réponds en français avec des chiffres précis et utilise des indicateurs visuels (🔴🟡🟢)."""
+Réponds en français avec des chiffres précis et utilise des indicateurs visuels (🔴🟡🟢).
+Si tu parles de tâches en retard ou de risques, n'hésite pas à être exhaustif pour que l'interface affiche les tableaux de données correspondants.
+Si on te demande un état des lieux de PLUSIEURS projets, utilise 'get_all_projects_status' pour une vue d'ensemble."""
 
 FALLBACK = {
     "planning":   "⚠️ Analyse planning indisponible. Réessayez dans 1 minute.",

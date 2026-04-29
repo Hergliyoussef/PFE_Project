@@ -101,6 +101,7 @@ export default function Sidebar({
     Cookies.remove("pm_chatbot_access_token")
     localStorage.removeItem("pm_user")
     localStorage.removeItem("pm_active_project")
+    localStorage.removeItem("pm_last_conv_id")
     navigate("/login")
   }
 

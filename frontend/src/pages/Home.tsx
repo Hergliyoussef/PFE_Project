@@ -14,20 +14,20 @@ export default function Home() {
           <div className="text-center max-w-4xl mx-auto">
             <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-primary/10 border border-primary/20 text-primary text-[11px] font-bold mb-5 animate-scale-in">
               <span className="relative flex h-2 w-2">
-                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-75"></span>
+                <span className="animate-ping absolute inline-flex h-full w-full rounded-full bg-primary opacity-80"></span>
                 <span className="relative inline-flex rounded-full h-2 w-2 bg-primary"></span>
               </span>
-              Solution de gestion assistée par IA
+              Solution de gestion  projet pour Redmine
             </div>
-            <h1 className="text-5xl md:text-6xl font-extrabold tracking-tight mb-5 bg-gradient-to-b from-white to-slate-400 bg-clip-text text-transparent drop-shadow-sm">
+            <h1 className="text-5xl md:text-6xl font-extrabold tracking-tight mb-5 bg-gradient-to-b from-white to-slate-200 bg-clip-text text-transparent drop-shadow-sm">
               L'IA au service de vos projets
             </h1>
-            <p className="text-[19px] text-muted-foreground mb-6 max-w-2xl mx-auto leading-relaxed animate-fade-in [animation-delay:200ms]">
+            <p className="text-[20px] text-muted-foreground mb-6 max-w-2xxl mx-auto leading-relaxed animate-fade-in [animation-delay:200ms]">
               Boostez votre productivité avec PM Assistant. Analysez vos métriques Redmine,
               générez des rapports intelligents et anticipez les risques en temps réel.
             </p>
-            <div className="flex flex-col sm:flex-row gap-4 justify-center animate-fade-in [animation-delay:400ms]">
-              <Button size="lg" className="h-12 px-8 text-md font-bold rounded-xl shadow-lg shadow-primary/20 hover:shadow-primary/40 hover:scale-105 transition-all duration-300" onClick={() => navigate("/login")}>
+            <div className="flex flex-col sm:flex-row gap-4 justify-center animate-fade-in [animation-delay:200ms]">
+              <Button size="lg" className="h-12 px-8 text-md font-bold rounded-xxl shadow-lg shadow-primary/200 hover:shadow-primary/40 hover:scale-105 transition-all duration-300" onClick={() => navigate("/login")}>
                 🚀 Accéder à l'Assistant
               </Button>
             </div>
@@ -39,21 +39,21 @@ export default function Home() {
       </section>
 
       {/* Features Grid */}
-      <section className="py-10 bg-slate-950/50 border-t border-white/5 animate-fade-in-up [animation-delay:600ms]">
+      <section className="py-10 bg-card/50 border-t border-white/5 animate-fade-in-up [animation-delay:600ms]">
         <div className="container px-4 mx-auto">
           <div className="grid grid-cols-1 md:grid-cols-3 gap-8">
             <FeatureCard
-              icon={<Zap className="w-8 h-8 text-blue-400" />}
+              icon={<Zap className="w-8 h-8 text-primary" />}
               title="Gestion des Tâches"
               description="Créez, mettez à jour et organisez vos tickets Redmine en langage naturel avec l'assistant."
             />
             <FeatureCard
-              icon={<MessageSquare className="w-8 h-8 text-indigo-400" />}
+              icon={<MessageSquare className="w-8 h-8 text-primary" />}
               title="Analyse de Données"
               description="Obtenez des résumés intelligents de l'état de vos projets et de la charge de vos équipes."
             />
             <FeatureCard
-              icon={<LayoutDashboard className="w-8 h-8 text-violet-400" />}
+              icon={<LayoutDashboard className="w-8 h-8 text-primary" />}
               title="Planification & Suivi"
               description="Suivez l'avancement global via des graphiques interactifs et des tableaux de bord en temps réel."
             />
@@ -62,7 +62,7 @@ export default function Home() {
       </section>
 
       {/* Footer */}
-      <footer className="py-2 border-t border-white/10 text-center text-base text-slate-500 w-fit mx-auto px-4">
+      <footer className="py-2 border-t border-white/10 text-center text-base text-slate-400 w-fit mx-auto px-4">
         <p>PM Assistant Chatbot PFE — 2026. Optimisé pour Redmine — Hergli Youssef.</p>
       </footer>
     </div>

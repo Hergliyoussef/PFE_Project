@@ -4,26 +4,26 @@
 
 @layer base {
   :root {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-    --primary: 217.2 91.2% 59.8%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
+    --background: 195 100% 7%;
+    --foreground: 195 50% 96%;
+    --card: 195 100% 11%;
+    --card-foreground: 195 50% 96%;
+    --popover: 195 100% 9%;
+    --popover-foreground: 195 50% 96%;
+    --primary: 80 76% 50%;
+    --primary-foreground: 195 100% 7%;
+    --secondary: 195 44% 49%;
+    --secondary-foreground: 195 50% 96%;
+    --muted: 195 100% 15%;
+    --muted-foreground: 195 20% 70%;
+    --accent: 80 60% 35%;
+    --accent-foreground: 195 50% 96%;
     --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 224.3 76.3% 48%;
-    --radius: 0.5rem;
+    --destructive-foreground: 195 50% 96%;
+    --border: 195 100% 15%;
+    --input: 195 100% 15%;
+    --ring: 80 76% 50%;
+    --radius: 1rem;
   }
 }
 
@@ -31,6 +31,7 @@
   * {
     @apply border-border;
   }
+
   body {
     @apply bg-background text-foreground;
     font-feature-settings: "rlig" 1, "calt" 1;
@@ -39,28 +40,61 @@
 
 
 @keyframes fadeInUp {
-  from { opacity: 0; transform: translateY(24px); }
-  to   { opacity: 1; transform: translateY(0); }
+  from {
+    opacity: 0;
+    transform: translateY(24px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
 }
 
 @keyframes floatY {
-  0%, 100% { transform: translateY(0); }
-  50%      { transform: translateY(-10px); }
+
+  0%,
+  100% {
+    transform: translateY(0);
+  }
+
+  50% {
+    transform: translateY(-10px);
+  }
 }
 
 @keyframes pulseRing {
-  0%   { transform: translate(-50%, -50%) scale(0.85); opacity: 0.8; }
-  100% { transform: translate(-50%, -50%) scale(1.55); opacity: 0; }
+  0% {
+    transform: translate(-50%, -50%) scale(0.85);
+    opacity: 0.8;
+  }
+
+  100% {
+    transform: translate(-50%, -50%) scale(1.55);
+    opacity: 0;
+  }
 }
 
 @keyframes gradShift {
-  0%, 100% { background-position: 0% 50%; }
-  50%      { background-position: 100% 50%; }
+
+  0%,
+  100% {
+    background-position: 0% 50%;
+  }
+
+  50% {
+    background-position: 100% 50%;
+  }
 }
 
 @keyframes shine {
-  0%   { left: -60%; }
-  100% { left: 160%; }
+  0% {
+    left: -60%;
+  }
+
+  100% {
+    left: 160%;
+  }
 }
 
 .animate-fade-in-up {
@@ -104,23 +138,52 @@
 }
 
 @keyframes slideInRight {
-  from { opacity: 0; transform: translateX(20px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 @keyframes slideInLeft {
-  from { opacity: 0; transform: translateX(-20px); }
-  to   { opacity: 1; transform: translateX(0); }
+  from {
+    opacity: 0;
+    transform: translateX(-20px);
+  }
+
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
 }
 
 @keyframes scaleIn {
-  from { opacity: 0; transform: scale(0.95); }
-  to   { opacity: 1; transform: scale(1); }
+  from {
+    opacity: 0;
+    transform: scale(0.95);
+  }
+
+  to {
+    opacity: 1;
+    transform: scale(1);
+  }
 }
 
-.animate-slide-right { animation: slideInRight 0.5s ease both; }
-.animate-slide-left { animation: slideInLeft 0.5s ease both; }
-.animate-scale-in { animation: scaleIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both; }
+.animate-slide-right {
+  animation: slideInRight 0.5s ease both;
+}
+
+.animate-slide-left {
+  animation: slideInLeft 0.5s ease both;
+}
+
+.animate-scale-in {
+  animation: scaleIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) both;
+}
 
 .glass-effect {
   @apply bg-white/5 backdrop-blur-xl border border-white/10;
@@ -137,4 +200,3 @@
 .glow-primary-hover:hover {
   box-shadow: 0 0 30px rgba(99, 102, 241, 0.4);
 }
-

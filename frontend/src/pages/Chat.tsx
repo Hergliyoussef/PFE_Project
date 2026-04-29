@@ -219,14 +219,14 @@ export default function Chat() {
 
       <main className="flex-1 flex flex-col relative bg-[radial-gradient(circle_at_50%_50%,rgba(99,102,241,0.02),transparent)]">
         {/* Floating Header */}
-        <header className="h-12 border-b border-white/5 flex items-center justify-between px-8 bg-slate-950/40 backdrop-blur-2xl sticky top-0 z-20 animate-fade-in">
+        <header className="h-12 border-b border-white/5 flex items-center justify-between px-8 bg-card/40 backdrop-blur-2xl sticky top-0 z-20 animate-fade-in">
           <div className="flex flex-col">
             <div className="flex items-center gap-2.5">
-              <div className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(99,102,241,0.5)]" />
-              <h2 className="font-black text-base tracking-tight text-white">Assistant IA</h2>
+              <div className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(154,205,50,0.5)]" />
+              <h2 className="font-black text-base tracking-tight text-white">{projectName || "Sélectionner un projet"}</h2>
             </div>
             <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Workspace:</span>
+              <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Projet Actuel:</span>
               <span className="text-[10px] font-bold text-primary/80 uppercase tracking-wider">{projectName}</span>
             </div>
           </div>
@@ -279,8 +279,8 @@ export default function Chat() {
 
             {messages.map((msg, i) => (
               <div key={i} className={`flex gap-3 animate-scale-in duration-500 ${msg.role === "assistant" ? "flex-row items-start" : "flex-row-reverse items-start"}`}>
-                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-2xl transition-transform hover:scale-105 ${msg.role === "assistant"
-                  ? "bg-gradient-to-br from-primary to-indigo-600 text-white"
+                <div className={`w-10 h-10 rounded-xl flex items-center justify-center shrink-0 shadow-2xl transition-transform hover:scale-110 ${msg.role === "assistant"
+                  ? "bg-gradient-to-br from-primary to-emerald-500 text-white glow-primary"
                   : "bg-slate-800 text-slate-300 border border-white/10"
                   }`}>
                   {msg.role === "assistant" ? <Bot className="w-5.5 h-5.5" /> : <UserIcon className="w-5.5 h-5.5" />}
@@ -293,9 +293,9 @@ export default function Chat() {
                     </span>
                   </div>
 
-                  <div className={`px-4 py-2.5 rounded-[20px] shadow-xl relative overflow-hidden transition-all hover:shadow-primary/5 ${msg.role === "assistant"
+                  <div className={`px-4 py-2.5 rounded-[20px] shadow-xl relative overflow-hidden transition-all hover:shadow-primary/20 ${msg.role === "assistant"
                     ? "bg-white/[0.04] backdrop-blur-xl border border-white/5 text-slate-200"
-                    : "bg-gradient-to-br from-indigo-600 to-primary text-white border border-white/10 rounded-tr-none"
+                    : "bg-primary/10 backdrop-blur-md border border-primary/30 text-white rounded-tr-none shadow-lg shadow-primary/5"
                     }`}>
                     <div className="text-sm leading-relaxed prose prose-invert prose-p:my-0 prose-pre:bg-slate-950/50 prose-pre:border prose-pre:border-white/10 max-w-none pr-6 group relative">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
@@ -945,7 +945,7 @@ export default function Chat() {
                               <span className="text-xs text-slate-400 mb-1.5 font-bold uppercase tracking-widest">Terminé</span>
                             </div>
                             <div className="h-3 bg-white/5 rounded-full overflow-hidden p-0.5 border border-white/5">
-                              <div className="h-full bg-gradient-to-r from-primary to-indigo-400 rounded-full shadow-[0_0_15px_rgba(99,102,241,0.5)] transition-all duration-1000" style={{ width: `${msg.data.avg_progress || 0}%` }} />
+                              <div className="h-full bg-primary rounded-full shadow-[0_0_15px_rgba(169,14,34,0.3)] transition-all duration-1000" style={{ width: `${msg.data.avg_progress || 0}%` }} />
                             </div>
                           </div>
                         </div>
@@ -1022,7 +1022,7 @@ export default function Chat() {
                               </div>
                               <div className="relative h-2 bg-white/5 rounded-full overflow-hidden">
                                 <div
-                                  className="absolute h-full bg-gradient-to-r from-primary to-indigo-500 rounded-full"
+                                  className="absolute h-full bg-primary rounded-full"
                                   style={{
                                     width: `${issue.done_ratio || 0}%`,
                                     left: '0%'
@@ -1057,7 +1057,7 @@ export default function Chat() {
         </ScrollArea>
 
         {/* Floating Input Bar */}
-        <div className="p-2 md:p-4 pt-0 bg-gradient-to-t from-[#020617] via-[#020617]/90 to-transparent animate-fade-in-up">
+        <div className="p-2 md:p-4 pt-0 bg-gradient-to-t from-background via-background/90 to-transparent animate-fade-in-up">
           <form
             onSubmit={handleSendMessage}
             className="max-w-5xl mx-auto relative group px-4"

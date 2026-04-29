@@ -128,22 +128,35 @@ export default function Sidebar({
     <div className="w-72 h-screen bg-[#0b0f1a] border-r border-white/5 flex flex-col">
       {/* Header & Projects */}
       <div className="p-4 space-y-4">
-        <div className="flex items-center gap-2 px-2">
-          <div className="w-8 h-8 bg-primary rounded-lg flex items-center justify-center font-bold text-primary-foreground shadow-lg shadow-primary/20">PM</div>
-          <span className="font-bold text-slate-100 tracking-tight">Chatbot IA d'Assistance à la Gestion de Projet</span>
+        <div className="flex items-center gap-3 px-2 py-2">
+          <div className="relative group">
+            <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full animate-pulse group-hover:bg-primary/40 transition-all duration-500" />
+            <div className="relative w-12 h-12 bg-gradient-to-br from-primary to-emerald-600 rounded-[14px] flex items-center justify-center font-black text-primary-foreground shadow-2xl shadow-primary/30 border border-white/10 animate-float">
+              PM
+            </div>
+          </div>
+          <div className="flex flex-col leading-tight">
+            <span className="font-black text-slate-100 tracking-tight text-[13px]">Chatbot IA</span>
+            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Gestion de Projet</span>
+          </div>
         </div>
 
         <div className="px-1">
           <Select value={activeProject} onValueChange={handleProjectChange}>
-            <SelectTrigger className="w-full bg-white/5 border-white/10 text-slate-200 h-10">
-              <div className="flex items-center gap-2 truncate">
-                <FolderKanban className="w-4 h-4 text-primary shrink-0" strokeWidth={2.5} />
-                <SelectValue placeholder="Sélectionner un projet" />
+            <SelectTrigger className="w-full bg-primary/10 border-primary/20 text-slate-100 h-12 rounded-2xl hover:bg-primary/20 transition-all shadow-lg shadow-primary/5">
+              <div className="flex items-center gap-2.5 truncate">
+                <div className="p-1.5 bg-primary/20 rounded-lg text-primary">
+                  <FolderKanban className="w-4 h-4" strokeWidth={2.5} />
+                </div>
+                <div className="flex flex-col items-start truncate leading-tight">
+                  <span className="text-[9px] font-black text-primary uppercase tracking-widest">Projet</span>
+                  <SelectValue placeholder="Choisir un projet" className="font-bold text-xs" />
+                </div>
               </div>
             </SelectTrigger>
-            <SelectContent className="bg-slate-900 border-white/10 text-slate-200">
+            <SelectContent className="bg-slate-900 border-white/10 text-slate-200 rounded-2xl shadow-2xl">
               {projects.map((proj) => (
-                <SelectItem key={proj.identifier} value={proj.identifier}>
+                <SelectItem key={proj.identifier} value={proj.identifier} className="rounded-xl focus:bg-primary/20 focus:text-primary">
                   {proj.name}
                 </SelectItem>
               ))}

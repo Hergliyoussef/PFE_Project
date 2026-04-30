@@ -27,7 +27,7 @@ async def lifespan(app: FastAPI):
     
     logger.info("Démarrage du monitoring proactif...")
     start_monitor()
-    await check_all_projects()
+    # await check_all_projects() # Ne pas bloquer le démarrage si Redmine est lent/down
     yield
     stop_monitor()
 app = FastAPI(
@@ -43,6 +43,8 @@ app.add_middleware(
         "http://localhost:8501", 
         "http://localhost:5173", 
         "http://127.0.0.1:5173",
+        "http://localhost:5174", 
+        "http://127.0.0.1:5174",
         "http://localhost:3000", 
         "http://127.0.0.1:3000",
         "http://pm_frontend"
@@ -56,6 +58,13 @@ app.add_middleware(
 app.include_router(auth_router, prefix="/api/v1")     # /api/v1/auth/login
 app.include_router(chat_router, prefix="/api/v1")     # /api/v1/chat
 
+
+from fastapi.responses import RedirectResponse
+
+@app.get("/")
+def root():
+    """Redirige vers la documentation Swagger."""
+    return RedirectResponse(url="/docs")
 
 @app.get("/health")
 def health():

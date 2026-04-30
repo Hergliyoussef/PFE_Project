@@ -41,6 +41,38 @@ class ChatResponse(BaseModel):
     user_message_id: Optional[int] = None
     ai_message_id:   Optional[int] = None
 
+# ── UTILS SÉCURITÉ ────────────────────────────────────────────
+
+async def verify_project_access(project_id: str, current_user: dict):
+    """
+    Vérifie si l'utilisateur a le droit d'accéder aux données de gestion d'un projet.
+    CEO -> Accès total.
+    PM -> Accès si rôle autorisé sur le projet.
+    """
+    from services.redmine_client import redmine
+    from config import settings
+    
+    is_ceo = current_user.get("is_admin", False)
+    if is_ceo:
+        redmine_api_key_ctx.set(settings.redmine_api_key)
+        return True
+    
+    # Pour les PM, on vérifie leur rôle sur ce projet précis
+    redmine_api_key_ctx.set(current_user.get("api_key"))
+    try:
+        user_id = current_user.get("user_id")
+        memberships = redmine.get_project_members(project_id)
+        user_membership = next((m for m in memberships if m.get("user", {}).get("id") == user_id), None)
+        
+        if not user_membership:
+            return False
+            
+        from services.auth import AUTHORIZED_ROLES
+        user_roles = {r.get("name") for r in user_membership.get("roles", [])}
+        return bool(user_roles & AUTHORIZED_ROLES)
+    except:
+        return False
+
 # ── LOGIQUE DE PERSISTENCE POSTGRES ───────────────────────────
 
 def _save_to_postgres(db: Session, project_id: str, project_name: str, question: str, answer: str, conversation_id: str, username: str, user_role: str):
@@ -92,10 +124,15 @@ async def chat(
     current_user: dict = Depends(require_authorized_role),
     db: Session = Depends(get_db)
 ):
-    # Set Redmine context
-    redmine_api_key_ctx.set(current_user.get("api_key"))
-    redmine_user_login_ctx.set(current_user.get("sub"))
+    # 1. Vérification de la permission sur le projet
+    has_access = await verify_project_access(req.project_id, current_user)
+    if not has_access:
+        raise HTTPException(
+            status_code=403, 
+            detail=f"Accès refusé. Vous n'avez pas les droits de gestion sur le projet '{req.project_id}'."
+        )
 
+    redmine_user_login_ctx.set(current_user.get("sub"))
     user_id_str = current_user.get("sub")
     user_id_int = current_user.get("user_id", 1)
 
@@ -387,12 +424,14 @@ async def get_project_metrics(
     project_id: str,
     current_user: dict = Depends(require_authorized_role)
 ):
-    # Set Redmine context
-    redmine_api_key_ctx.set(current_user.get("api_key"))
+    # Vérification de la permission par projet
+    has_access = await verify_project_access(project_id, current_user)
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Accès Dashboard refusé. Rôle de gestionnaire requis sur ce projet.")
+
     redmine_user_login_ctx.set(current_user.get("sub"))
 
     try:
-        from services.redmine_client import redmine
         # On récupère les métriques complètes de Redmine
         computed = redmine.compute_project_metrics(project_id)
         
@@ -430,8 +469,17 @@ async def get_project_metrics(
             "workload_data":   workload_data,
             "progress_data":   progress_data,
             "overload_rate":   computed.get("max_workload", 0),
-            "risks_count":     computed.get("critical_issues", 0),
-            "total_issues":    computed.get("total_issues", 0)
+            "risks_count":     computed.get("critical_issues_count", 0),
+            "total_issues":    computed.get("total_issues", 0),
+            "velocity":        computed.get("velocity", 0),
+            "status_distribution": computed.get("status_distribution", []),
+            "priority_distribution": computed.get("priority_distribution", []),
+            "tracker_distribution": computed.get("tracker_distribution", []),
+            "critical_issues_list": computed.get("critical_issues_list", []),
+            "team_workload":   computed.get("team_workload", []),
+            "bottleneck_alert": computed.get("bottleneck_alert"),
+            "members_detailed": computed.get("members_detailed", []),
+            "overdue_issues":  computed.get("overdue_issues", 0)
         }
     except Exception as e:
         logger.error(f"[Metrics] Erreur critique pour {project_id}: {e}")

@@ -643,18 +643,30 @@ class RedmineClient:
 
     # --- TEMPS & ÉQUIPE ---
     def get_time_entries(self, project_id: str, days_back: int = 30) -> list[dict]:
-        from_date = str(date.today() - timedelta(days=days_back))
-        params = {"project_id": project_id, "from": from_date, "limit": 200}
+        # Résolution d'ID pour filtrage fiable
+        try:
+            p_data = self._get(f"/projects/{project_id}.json").get("project", {})
+            internal_id = p_data.get("id")
+        except:
+            internal_id = None
+
+        params = {"project_id": project_id, "limit": 200}
         data = self._get("/time_entries.json", params)
-        return data.get("time_entries", [])
+        entries = data.get("time_entries", [])
+        
+        # Filtrage manuel strict par ID interne
+        if internal_id:
+            return [e for e in entries if e.get("project", {}).get("id") == internal_id]
+        return entries
 
     def get_time_by_user(self, project_id: str) -> dict[str, float]:
         entries = self.get_time_entries(project_id)
-        by_user = {}
-        for e in entries:
-            name = e.get("user", {}).get("name", "Inconnu")
-            by_user[name] = by_user.get(name, 0) + e.get("hours", 0)
-        return by_user
+        time_map = {}
+        for entry in entries:
+            user = entry.get("user", {}).get("name", "Inconnu")
+            hours = float(entry.get("hours", 0))
+            time_map[user] = time_map.get(user, 0) + hours
+        return time_map
 
     def get_news(self, project_id: str) -> list[dict]:
         data = self._get(f"/projects/{project_id}/news.json")
@@ -684,20 +696,21 @@ class RedmineClient:
         Analyse profonde du projet pour alimenter les agents de décision.
         """
         versions = self.get_versions(project_id)
+        # On fait confiance à l'API Redmine qui filtre déjà par project_id
         all_issues = self.get_issues(project_id, status="*")
+        
+        logger.info(f"[Metrics] {len(all_issues)} tickets bruts reçus pour {project_id}")
+        if all_issues:
+            logger.info(f"[Metrics] Sample ticket 0: Status={all_issues[0].get('status',{}).get('name')}, Prio={all_issues[0].get('priority',{}).get('name')}")
         
         closed_ids = self.get_closed_status_ids()
         
         def is_issue_closed(i):
-            if i.get("status", {}).get("id") in closed_ids:
-                return True
-            # Fallback
-            name = str(i.get("status", {}).get("name", "")).lower()
-            if any(x in name for x in ["clos", "fermé", "resolv", "résolu", "termin", "rejet"]):
-                return True
-            if i.get("status", {}).get("is_closed"):
-                return True
-            return False
+            status = i.get("status", {})
+            if status.get("id") in closed_ids: return True
+            if status.get("is_closed"): return True
+            name = str(status.get("name", "")).lower()
+            return any(x in name for x in ["clos", "fermé", "resolv", "résolu", "termin", "rejet", "fini"])
 
         open_issues = [i for i in all_issues if not is_issue_closed(i)]
         done_issues = [i for i in all_issues if is_issue_closed(i)]
@@ -712,10 +725,16 @@ class RedmineClient:
         ]
         
         # Détection des problèmes critiques (priorité haute + non terminé)
-        critical_issues = [
-            i for i in all_issues
-            if i.get("priority", {}).get("id", 0) >= 4 and not is_issue_closed(i)
-        ]
+        critical_keywords = ["urgent", "immédiat", "haut", "high", "critical", "prioritaire"]
+        critical_issues = []
+        for i in all_issues:
+            p_name = str(i.get("priority", {}).get("name", "")).lower()
+            p_id = i.get("priority", {}).get("id", 0)
+            if not is_issue_closed(i):
+                if p_id >= 4 or any(kw in p_name for kw in critical_keywords):
+                    critical_issues.append(i)
+        
+        logger.info(f"[Metrics] {len(critical_issues)} tâches critiques détectées sur {len(all_issues)} tickets total")
 
         total = len(all_issues) or 1
         
@@ -732,7 +751,127 @@ class RedmineClient:
         
         final_progress = max(avg_done, completion_rate)
 
+        # Distributions pour les graphiques
+        status_counts = {}
+        priority_counts = {}
+        tracker_counts = {}
+        for i in all_issues:
+            s_name = i.get("status", {}).get("name", "Inconnu")
+            status_counts[s_name] = status_counts.get(s_name, 0) + 1
+            
+            p_name = i.get("priority", {}).get("name", "Normal")
+            priority_counts[p_name] = priority_counts.get(p_name, 0) + 1
+
+            t_name = i.get("tracker", {}).get("name", "Tâche")
+            tracker_counts[t_name] = tracker_counts.get(t_name, 0) + 1
+
+        status_colors = {
+            "Nouveau": "#3b82f6", 
+            "En cours": "#9ACD32", 
+            "Résolu": "#10b981", 
+            "Fermé": "#64748b", 
+            "Commentaire": "#f59e0b",
+            "Rejeté": "#ef4444"
+        }
+        priority_colors = {
+            "Urgent": "#f43f5e", 
+            "Immédiat": "#ef4444", 
+            "Haut": "#fbbf24", 
+            "Normal": "#10b981", 
+            "Bas": "#94a3b8"
+        }
+        tracker_colors = {
+            "Bug": "#ef4444",
+            "Anomalie": "#ef4444",
+            "Erreur": "#ef4444",
+            "Tâche": "#3b82f6",
+            "Task": "#3b82f6",
+            "Évolution": "#10b981",
+            "Feature": "#10b981",
+            "Assistance": "#10b981",
+            "Soutien": "#f59e0b"
+        }
+
+        # 6. Vélocité (Nombre de tickets fermés sur les 7 derniers jours)
+        seven_days_ago = date.today() - timedelta(days=7)
+        closed_recently = [
+            i for i in done_issues 
+            if i.get("closed_on") and date.fromisoformat(i["closed_on"][:10]) >= seven_days_ago
+        ]
+        velocity = len(closed_recently)
+
+        # 7. Analyse de la Charge Humaine (Resource Management)
+        user_load = {}
+        urgent_priorities = ["Urgent", "Immédiat"]
+        total_urgent_project = 0
+        
+        for i in all_issues:
+            assignee = i.get("assigned_to", {}).get("name", "Non assigné")
+            prio = i.get("priority", {}).get("name", "Normal")
+            
+            if assignee not in user_load:
+                user_load[assignee] = {"total": 0, "urgent": 0}
+            
+            user_load[assignee]["total"] += 1
+            if prio in urgent_priorities:
+                user_load[assignee]["urgent"] += 1
+                total_urgent_project += 1
+
+        team_workload = []
+        bottleneck_user = None
+        max_urgent_share = 0
+        
+        for name, stats in user_load.items():
+            urgent_share = (stats["urgent"] / total_urgent_project * 100) if total_urgent_project > 0 else 0
+            team_workload.append({
+                "name": name,
+                "total": stats["total"],
+                "urgent": stats["urgent"],
+                "share": round(urgent_share, 1),
+                "is_overloaded": stats["urgent"] >= 3 or stats["total"] >= 10
+            })
+            
+            if urgent_share > max_urgent_share:
+                max_urgent_share = urgent_share
+                bottleneck_user = name
+
+        bottleneck_alert = None
+        if max_urgent_share > 50 and bottleneck_user != "Non assigné" and total_urgent_project > 3:
+            bottleneck_alert = f"Attention : {round(max_urgent_share)}% de la charge critique repose sur {bottleneck_user}. Risque élevé de goulot d'étranglement."
+
         # Retourne un dictionnaire propre et structuré
+        # Récupération sécurisée des membres avec tri hiérarchique
+        members_list = []
+        role_priority = {
+            "ceo": 0,
+            "manager": 1,
+            "gestionnaire": 1,
+            "projet manager": 1,
+            "project manager": 1,
+            "développeur": 2,
+            "developer": 2,
+            "rapporteur": 3,
+            "reporter": 3
+        }
+
+        try:
+            raw_members = self.get_project_members(project_id)
+            for m in raw_members:
+                roles = [r.get("name") for r in m.get("roles", [])]
+                # Déterminer la priorité la plus haute (le chiffre le plus petit) pour cet utilisateur
+                prio = min([role_priority.get(r.lower(), 10) for r in roles], default=10)
+                
+                members_list.append({
+                    "name": m.get("user", {}).get("name", "Inconnu"),
+                    "roles": roles,
+                    "priority": prio
+                })
+            
+            # Trier par priorité, puis par nom
+            members_list.sort(key=lambda x: (x["priority"], x["name"]))
+        except Exception as e:
+            logger.error(f"[Metrics] Erreur récupération membres pour {project_id} : {e}")
+
         return {
             "project_id": project_id,
             "total_issues": len(all_issues),
@@ -741,12 +880,34 @@ class RedmineClient:
             "overdue_issues": len(overdue),
             "not_started": len(not_started),
             "blocking_issues_count": len(blocking_issues),
-            "critical_issues": len(critical_issues),
+            "critical_issues_count": len(critical_issues),
             "active_versions": len([v for v in versions if v.get("status") == "open"]),
             "avg_progress": round(final_progress, 1),
             "completion_rate": round(completion_rate, 1),
+            "velocity": velocity,
             "max_workload": round(max([min((h / 40) * 100, 100) for h in self.get_time_by_user(project_id).values()], default=0), 1),
             "time_by_user": self.get_time_by_user(project_id),
+            "status_distribution": [
+                {"name": k, "value": v, "color": status_colors.get(k, "#a855f7")} 
+                for k, v in status_counts.items()
+            ],
+            "priority_distribution": [
+                {"name": k, "value": v, "color": priority_colors.get(k, "#64748b")} 
+                for k, v in priority_counts.items()
+            ],
+            "tracker_distribution": [
+                {"name": k, "value": v, "color": tracker_colors.get(k, "#3b82f6")}
+                for k, v in tracker_counts.items()
+            ],
+            "critical_issues_list": [
+                {
+                    "id": i["id"],
+                    "subject": i["subject"],
+                    "priority": i.get("priority", {}).get("name"),
+                    "status": i.get("status", {}).get("name"),
+                    "assigned": i.get("assigned_to", {}).get("name", "Non assigné")
+                } for i in (critical_issues[:4] if critical_issues else open_issues[:4])
+            ],
             "overdue_list": [
                 {
                     "id": i["id"], 
@@ -755,7 +916,10 @@ class RedmineClient:
                     "assignee": i.get("assigned_to", {}).get("name", "Non assigné"),
                     "delay_days": (date.today() - date.fromisoformat(i["due_date"])).days if i.get("due_date") else 0
                 } for i in overdue
-            ]
+            ],
+            "team_workload": team_workload,
+            "bottleneck_alert": bottleneck_alert,
+            "members_detailed": members_list
         }
 
 # Instance singleton

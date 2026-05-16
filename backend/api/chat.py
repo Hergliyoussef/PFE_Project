@@ -1,4 +1,5 @@
 from fastapi import APIRouter, HTTPException, Depends
+from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
 import logging
@@ -65,12 +66,20 @@ async def verify_project_access(project_id: str, current_user: dict):
         user_membership = next((m for m in memberships if m.get("user", {}).get("id") == user_id), None)
         
         if not user_membership:
+            logger.warning(f"[Access] Utilisateur {user_id} non trouvé parmi les membres de {project_id}")
             return False
             
         from services.auth import AUTHORIZED_ROLES
-        user_roles = {r.get("name") for r in user_membership.get("roles", [])}
-        return bool(user_roles & AUTHORIZED_ROLES)
-    except:
+        user_roles = {r.get("name", "").lower().strip() for r in user_membership.get("roles", [])}
+        allowed_roles = {r.lower().strip() for r in AUTHORIZED_ROLES}
+        
+        has_access = bool(user_roles & allowed_roles)
+        if not has_access:
+            logger.warning(f"[Access] Accès refusé pour {user_id} sur {project_id}. Rôles: {user_roles} | Requis: {allowed_roles}")
+            
+        return has_access
+    except Exception as e:
+        logger.error(f"[Access] Erreur verify_project_access: {e}")
         return False
 
 # ── LOGIQUE DE PERSISTENCE POSTGRES ───────────────────────────
@@ -100,7 +109,7 @@ def _save_to_postgres(db: Session, project_id: str, project_name: str, question:
         )
         msg_ai = DBMessage(
             conversation_id=conversation_id, 
-            name_user="assistant", # Désormais valide car l'utilisateur existe
+            name_user=None,  # NULL : l'assistant n'est pas un vrai user en DB
             role="assistant", 
             content=answer
         )
@@ -117,6 +126,39 @@ def _save_to_postgres(db: Session, project_id: str, project_name: str, question:
         return None, None
 
 # ── ROUTES API ────────────────────────────────────────────────
+
+@router.post("/chat/stream")
+async def chat_stream(
+    req: ChatRequest,
+    current_user: dict = Depends(require_authorized_role),
+    db: Session = Depends(get_db)
+):
+    # 1. Vérification accès
+    has_access = await verify_project_access(req.project_id, current_user)
+    if not has_access:
+        raise HTTPException(status_code=403, detail="Accès refusé.")
+
+    redmine_user_login_ctx.set(current_user.get("sub"))
+    user_id_str = current_user.get("sub")
+    
+    # Rôle
+    user_roles = current_user.get("roles", [])
+    primary_role = "PROJECT_MANAGER"
+    if "CEO" in user_roles or current_user.get("is_admin"):
+        primary_role = "CEO"
+
+    from agents.supervisor_agent import run_agent_stream
+    return StreamingResponse(
+        run_agent_stream(
+            question=req.question,
+            project_id=req.project_id,
+            project_name=req.project_name or "",
+            user_id=user_id_str,
+            user_role=primary_role,
+            history=req.history or []
+        ),
+        media_type="text/event-stream"
+    )
 
 @router.post("/chat", response_model=ChatResponse)
 async def chat(
@@ -145,7 +187,7 @@ async def chat(
 
     # 1. Historique court-terme (Redis - Isolé par session)
     redis_key = f"{safe_proj_id}:{conv_id}"
-    redis_history = get_history(user_id_str, redis_key, last_n=8)
+    redis_history = get_history(user_id_str, redis_key, last_n=20)
     context_history = redis_history if redis_history else req.history
 
     try:
@@ -448,13 +490,14 @@ async def get_project_metrics(
         
         # 3. Préparation des données pour le graphique de progression (AreaChart)
         # Simulation d'historique (Redmine ne donne pas l'historique direct sans bcp de requêtes)
-        # On crée une courbe qui monte jusqu'au taux actuel
+        # On crée une courbe qui monte jusqu'au taux actuel avec des dates réelles (JJ/MM)
         current_rate = computed.get("completion_rate", 0)
+        today = datetime.now()
         progress_data = [
-            {"date": "J-20", "percent": round(max(0, current_rate - 15), 1)},
-            {"date": "J-15", "percent": round(max(0, current_rate - 12), 1)},
-            {"date": "J-10", "percent": round(max(0, current_rate - 8), 1)},
-            {"date": "J-5",  "percent": round(max(0, current_rate - 3), 1)},
+            {"date": (today - timedelta(days=20)).strftime("%d / %m"), "percent": round(max(0, current_rate - 15), 1)},
+            {"date": (today - timedelta(days=15)).strftime("%d / %m"), "percent": round(max(0, current_rate - 12), 1)},
+            {"date": (today - timedelta(days=10)).strftime("%d / %m"), "percent": round(max(0, current_rate - 8), 1)},
+            {"date": (today - timedelta(days=5)).strftime("%d / %m"),  "percent": round(max(0, current_rate - 3), 1)},
             {"date": "Aujourd'hui", "percent": current_rate},
         ]
 

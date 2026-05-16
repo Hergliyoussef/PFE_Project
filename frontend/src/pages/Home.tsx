@@ -2,6 +2,7 @@ import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
 import { useNavigate } from "react-router-dom"
 import { LayoutDashboard, MessageSquare, Zap } from "lucide-react"
+import Cookies from "js-cookie"
 
 export default function Home() {
   const navigate = useNavigate()
@@ -27,7 +28,18 @@ export default function Home() {
               générez des rapports intelligents et anticipez les risques en temps réel.
             </p>
             <div className="flex flex-col sm:flex-row gap-4 justify-center animate-fade-in [animation-delay:200ms]">
-              <Button size="lg" className="h-12 px-8 text-md font-bold rounded-xxl shadow-lg shadow-primary/200 hover:shadow-primary/40 hover:scale-105 transition-all duration-300" onClick={() => navigate("/login")}>
+              <Button 
+                size="lg" 
+                className="h-12 px-8 text-md font-bold rounded-xxl shadow-lg shadow-primary/200 hover:shadow-primary/40 hover:scale-105 transition-all duration-300" 
+                onClick={() => {
+                  const token = Cookies.get("pm_chatbot_access_token")
+                  if (token) {
+                    navigate("/chat")
+                  } else {
+                    navigate("/login")
+                  }
+                }}
+              >
                 🚀 Accéder à l'Assistant
               </Button>
             </div>

@@ -8,6 +8,8 @@ import logging
 
 from api.chat import router as chat_router
 from api.auth import router as auth_router
+from services.websocket_manager import manager
+from fastapi import WebSocket, WebSocketDisconnect
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
@@ -57,6 +59,17 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────
 app.include_router(auth_router, prefix="/api/v1")     # /api/v1/auth/login
 app.include_router(chat_router, prefix="/api/v1")     # /api/v1/chat
+
+@app.websocket("/ws/dashboard/{project_id}")
+async def websocket_endpoint(websocket: WebSocket, project_id: str):
+    await manager.connect(websocket, project_id)
+    try:
+        while True:
+            # On garde la connexion ouverte (on peut recevoir des pings si besoin)
+            data = await websocket.receive_text()
+            # Pour l'instant on ne traite pas les messages entrants du client
+    except WebSocketDisconnect:
+        manager.disconnect(websocket, project_id)
 
 
 from fastapi.responses import RedirectResponse

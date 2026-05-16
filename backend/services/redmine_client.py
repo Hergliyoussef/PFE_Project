@@ -37,29 +37,48 @@ class RedmineClient:
             limits=httpx.Limits(max_connections=20, max_keepalive_connections=5)
         )
 
-    def _get(self, path: str, params: dict = None, api_key: str = None, user_login: str = None) -> dict:
-        """Méthode de base pour les requêtes GET avec gestion d'erreurs."""
-        headers = {}
-        
+    def _get(self, path: str, params: dict = None, api_key: str = None, user_login: str = None, cache_ttl: int = 300) -> dict:
+        """Méthode de base pour les requêtes GET avec gestion d'erreurs et cache Redis."""
+        from services.redis_client import r as redis_conn
+        import json
+        import hashlib
+
         # 1. Gestion de l'API Key
         effective_key = api_key or redmine_api_key_ctx.get()
+        effective_login = user_login or redmine_user_login_ctx.get()
+        
+        # 2. Construction de la clé de cache
+        cache_key_raw = f"redmine_cache:{path}:{json.dumps(params or {}, sort_keys=True)}:{effective_key}:{effective_login}"
+        cache_key = hashlib.md5(cache_key_raw.encode()).hexdigest()
+
+        # 3. Tentative de lecture du cache (si TTL > 0)
+        if cache_ttl > 0:
+            cached_data = redis_conn.get(f"api:redmine_cache:{cache_key}")
+            if cached_data:
+                # logger.debug(f"[Cache] Hit pour {path}")
+                return json.loads(cached_data)
+
+        headers = {}
         if effective_key:
             headers["X-Redmine-API-Key"] = effective_key
-            
-        # 2. Gestion de l'impersonnation
-        effective_login = user_login or redmine_user_login_ctx.get()
         if effective_login and (not effective_key or effective_key == self.api_key):
             headers["X-Redmine-Switch-User"] = effective_login
             
         try:
             r = self.client.get(path, headers=headers, params=params or {})
             r.raise_for_status()
-            return r.json()
+            data = r.json()
+            
+            # 4. Stockage en cache
+            if cache_ttl > 0:
+                redis_conn.setex(f"api:redmine_cache:{cache_key}", cache_ttl, json.dumps(data))
+                
+            return data
         except httpx.TimeoutException:
-            logger.error(f"Redmine timeout (30s) — {path}")
+            logger.error(f"Redmine timeout (30s) — {path} | Params: {params}")
             raise Exception("Le serveur Redmine est trop lent à répondre. Veuillez réessayer.")
         except httpx.HTTPStatusError as e:
-            logger.error(f"Redmine HTTP {e.response.status_code} — {path} : {e.response.text}")
+            logger.error(f"Redmine HTTP {e.response.status_code} — {path} | Params: {params} | Resp: {e.response.text}")
             raise Exception(f"Erreur Redmine {e.response.status_code}: {e.response.text}")
         except Exception as e:
             logger.error(f"Redmine inaccessible — {e}")
@@ -97,6 +116,8 @@ class RedmineClient:
         try:
             r = self.client.post(path, headers=headers, json=payload)
             r.raise_for_status()
+            # Invalider le cache après une création
+            self._invalidate_project_cache()
             return r.json() if r.text else {}
         except httpx.TimeoutException:
             logger.error(f"Redmine POST timeout (30s) — {path}")
@@ -121,6 +142,8 @@ class RedmineClient:
         try:
             r = self.client.delete(path, headers=headers)
             r.raise_for_status()
+            # Invalider le cache après une suppression
+            self._invalidate_project_cache()
             return True
         except httpx.TimeoutException:
             logger.error(f"Redmine DELETE timeout (30s) — {path}")
@@ -145,6 +168,8 @@ class RedmineClient:
         try:
             r = self.client.put(path, headers=headers, json=payload)
             r.raise_for_status()
+            # Invalider le cache après une modification
+            self._invalidate_project_cache()
             return True
         except httpx.TimeoutException:
             logger.error(f"Redmine PUT timeout (30s) — {path}")
@@ -155,6 +180,17 @@ class RedmineClient:
         except Exception as e:
             logger.error(f"Redmine PUT inaccessible — {e}")
             raise
+
+    def _invalidate_project_cache(self):
+        """Supprime les entrées de cache liées à l'API Redmine pour forcer le rafraîchissement."""
+        from services.redis_client import r as redis_conn
+        try:
+            keys = redis_conn.keys("api:redmine_cache:*")
+            if keys:
+                redis_conn.delete(*keys)
+                logger.info(f"[Cache] Invalidation de {len(keys)} entrées suite à une action.")
+        except Exception as e:
+            logger.error(f"[Cache] Erreur lors de l'invalidation : {e}")
 
     def execute_action(self, action: str, params: dict, api_key: str = None) -> dict:
         """Exécute une action planifiée."""
@@ -623,14 +659,48 @@ class RedmineClient:
 
     # --- ISSUES (TÂCHES) ---
     def get_issues(self, project_id: str, status: str = "open", limit: int = 100, api_key: str = None) -> list[dict]:
+        # 1. Résolution de l'ID interne pour filtrage strict
+        internal_id = None
+        try:
+            p_data = self._get(f"/projects/{project_id}.json", cache_ttl=3600).get("project", {})
+            internal_id = p_data.get("id")
+        except:
+            pass
+
         params = {
             "project_id": project_id,
             "status_id": status,
             "limit": limit,
-            "include": "journals,relations",
+            "include": "relations",
         }
-        data = self._get("/issues.json", params, api_key=api_key)
-        return data.get("issues", [])
+        # Cache désactivé (TTL=0) pour une précision maximale
+        data = self._get("/issues.json", params, api_key=api_key, cache_ttl=0)
+        
+        issues = data.get("issues", [])
+        light_issues = []
+        for i in issues:
+            # FILTRAGE STRICT : On ignore les tickets qui ne sont pas de ce projet (ex: cross-project queries)
+            ticket_project_id = i.get("project", {}).get("id")
+            if internal_id and ticket_project_id != internal_id:
+                continue
+
+            light_issues.append({
+                "id": i.get("id"),
+                "subject": i.get("subject"),
+                "project_id": ticket_project_id,
+                "project_name": i.get("project", {}).get("name"),
+                "status": i.get("status", {}).get("name"),
+                "status_id": i.get("status", {}).get("id"),
+                "priority": i.get("priority", {}).get("name"),
+                "priority_id": i.get("priority", {}).get("id"),
+                "tracker": i.get("tracker", {}).get("name"),
+                "tracker_id": i.get("tracker", {}).get("id"),
+                "assigned": i.get("assigned_to", {}).get("name"),
+                "due_date": i.get("due_date"),
+                "done_ratio": i.get("done_ratio"),
+                "estimated_hours": i.get("estimated_hours")
+            })
+        return light_issues
 
     def get_overdue_issues(self, project_id: str) -> list[dict]:
         today = str(date.today())
@@ -673,8 +743,8 @@ class RedmineClient:
         return data.get("news", [])
     
     def get_project_members(self, project_id: str) -> list[dict]:
-        """Récupère les membres du projet."""
-        data = self._get(f"/projects/{project_id}/memberships.json", {"limit": 100})
+        """Récupère les membres du projet avec un cache très court (10s) pour la réactivité."""
+        data = self._get(f"/projects/{project_id}/memberships.json", {"limit": 100}, cache_ttl=10)
         memberships = data.get("memberships", [])
         # Extraire les informations clés (id, name, roles)
         return [
@@ -695,21 +765,38 @@ class RedmineClient:
         """
         Analyse profonde du projet pour alimenter les agents de décision.
         """
+        # --- RÉSOLUTION ID NUMÉRIQUE ---
+        try:
+            p_data = self._get(f"/projects/{project_id}.json", cache_ttl=0).get("project", {})
+            internal_id = p_data.get("id")
+            p_name = p_data.get("name")
+            logger.info(f"[Metrics] Début analyse pour {p_name} (ID: {internal_id})")
+        except Exception as e:
+            logger.error(f"[Metrics] Échec résolution projet {project_id}: {e}")
+            internal_id = None
+
         versions = self.get_versions(project_id)
-        # On fait confiance à l'API Redmine qui filtre déjà par project_id
-        all_issues = self.get_issues(project_id, status="*")
+        # On récupère les tickets (normalement filtrés par Redmine)
+        raw_issues = self.get_issues(project_id, status="*")
         
-        logger.info(f"[Metrics] {len(all_issues)} tickets bruts reçus pour {project_id}")
-        if all_issues:
-            logger.info(f"[Metrics] Sample ticket 0: Status={all_issues[0].get('status',{}).get('name')}, Prio={all_issues[0].get('priority',{}).get('name')}")
+        # --- FILTRAGE MANUEL ULTRA-STRICT ---
+        # On ne garde que les tickets dont le project_id correspond EXACTEMENT à l'internal_id
+        if internal_id:
+            all_issues = [i for i in raw_issues if i.get("project_id") == internal_id]
+            diff = len(raw_issues) - len(all_issues)
+            if diff > 0:
+                logger.warning(f"[Metrics] {diff} tickets d'AUTRES PROJETS éliminés pour {project_id}")
+        else:
+            all_issues = raw_issues
+
+        logger.info(f"[Metrics] {len(all_issues)} tickets validés sur ce projet.")
         
         closed_ids = self.get_closed_status_ids()
         
         def is_issue_closed(i):
-            status = i.get("status", {})
-            if status.get("id") in closed_ids: return True
-            if status.get("is_closed"): return True
-            name = str(status.get("name", "")).lower()
+            s_id = i.get("status_id")
+            if s_id in closed_ids: return True
+            name = str(i.get("status", "")).lower()
             return any(x in name for x in ["clos", "fermé", "resolv", "résolu", "termin", "rejet", "fini"])
 
         open_issues = [i for i in all_issues if not is_issue_closed(i)]
@@ -728,8 +815,8 @@ class RedmineClient:
         critical_keywords = ["urgent", "immédiat", "haut", "high", "critical", "prioritaire"]
         critical_issues = []
         for i in all_issues:
-            p_name = str(i.get("priority", {}).get("name", "")).lower()
-            p_id = i.get("priority", {}).get("id", 0)
+            p_name = str(i.get("priority", "")).lower()
+            p_id = i.get("priority_id", 0)
             if not is_issue_closed(i):
                 if p_id >= 4 or any(kw in p_name for kw in critical_keywords):
                     critical_issues.append(i)
@@ -756,13 +843,16 @@ class RedmineClient:
         priority_counts = {}
         tracker_counts = {}
         for i in all_issues:
-            s_name = i.get("status", {}).get("name", "Inconnu")
+            s_val = i.get("status")
+            s_name = s_val if isinstance(s_val, str) else s_val.get("name", "Inconnu") if s_val else "Inconnu"
             status_counts[s_name] = status_counts.get(s_name, 0) + 1
             
-            p_name = i.get("priority", {}).get("name", "Normal")
+            p_val = i.get("priority")
+            p_name = p_val if isinstance(p_val, str) else p_val.get("name", "Normal") if p_val else "Normal"
             priority_counts[p_name] = priority_counts.get(p_name, 0) + 1
 
-            t_name = i.get("tracker", {}).get("name", "Tâche")
+            t_val = i.get("tracker")
+            t_name = t_val if isinstance(t_val, str) else t_val.get("name", "Tâche") if t_val else "Tâche"
             tracker_counts[t_name] = tracker_counts.get(t_name, 0) + 1
 
         status_colors = {
@@ -806,8 +896,12 @@ class RedmineClient:
         total_urgent_project = 0
         
         for i in all_issues:
-            assignee = i.get("assigned_to", {}).get("name", "Non assigné")
-            prio = i.get("priority", {}).get("name", "Normal")
+            # Gestion hybride des assignés (assigned_to dans format complet, assigned dans format light)
+            raw_assignee = i.get("assigned") or i.get("assigned_to")
+            assignee = raw_assignee if isinstance(raw_assignee, str) else raw_assignee.get("name", "Non assigné") if raw_assignee else "Non assigné"
+            
+            raw_prio = i.get("priority")
+            prio = raw_prio if isinstance(raw_prio, str) else raw_prio.get("name", "Normal") if raw_prio else "Normal"
             
             if assignee not in user_load:
                 user_load[assignee] = {"total": 0, "urgent": 0}
@@ -903,9 +997,9 @@ class RedmineClient:
                 {
                     "id": i["id"],
                     "subject": i["subject"],
-                    "priority": i.get("priority", {}).get("name"),
-                    "status": i.get("status", {}).get("name"),
-                    "assigned": i.get("assigned_to", {}).get("name", "Non assigné")
+                    "priority": i.get("priority") if isinstance(i.get("priority"), str) else i.get("priority", {}).get("name", "Normal"),
+                    "status": i.get("status") if isinstance(i.get("status"), str) else i.get("status", {}).get("name", "Nouveau"),
+                    "assigned": (i.get("assigned") or i.get("assigned_to")) if isinstance(i.get("assigned") or i.get("assigned_to"), str) else (i.get("assigned_to") or {}).get("name", "Non assigné")
                 } for i in (critical_issues[:4] if critical_issues else open_issues[:4])
             ],
             "overdue_list": [
@@ -913,7 +1007,7 @@ class RedmineClient:
                     "id": i["id"], 
                     "subject": i["subject"], 
                     "due_date": i.get("due_date"),
-                    "assignee": i.get("assigned_to", {}).get("name", "Non assigné"),
+                    "assignee": (i.get("assigned") or i.get("assigned_to")) if isinstance(i.get("assigned") or i.get("assigned_to"), str) else (i.get("assigned_to") or {}).get("name", "Non assigné"),
                     "delay_days": (date.today() - date.fromisoformat(i["due_date"])).days if i.get("due_date") else 0
                 } for i in overdue
             ],

@@ -19,6 +19,11 @@ NOM DU PROJET ACTIF : {project_name}
 ID DU PROJET ACTIF : {project_id}
 Date du jour : {today}
 
+RÈGLES D'INTÉGRITÉ :
+1. NE JAMAIS inventer de noms de projets, de noms de membres ou de chiffres.
+2. Utilise UNIQUEMENT les informations extraites via les outils.
+3. Si une donnée est manquante (ex: pas de tâches terminées), indique "Aucune donnée enregistrée sur Redmine" au lieu de simuler des réalisations.
+
 MISSION :
 Transformer les données techniques en une synthèse claire et actionnable pour le management.
 
@@ -26,16 +31,16 @@ STRUCTURE DE RÉPONSE OBLIGATOIRE (Markdown) :
 📊 **TITRE DU RAPPORT**
 ---
 ✅ **RÉALISATIONS RÉCENTES**
-(Liste des points positifs ou tâches terminées)
+(Liste des points positifs ou tâches terminées réellement trouvées dans Redmine)
 
 ⚠️ **POINTS DE VIGILANCE & ALERTES**
-(Utilise 🔴 pour critique, 🟡 pour attention)
+(Utilise 🔴 pour critique, 🟡 pour attention. Cite les noms de projets ou de tickets réels.)
 
 📋 **PROCHAINES ÉTAPES & ACTIONS**
-(Ce qu'il faut faire maintenant)
+(Actions concrètes basées sur les données)
 
 💡 **PRÉDICTION IA** : 
-(Basé sur les retards actuels, estime si la deadline du prochain sprint est réaliste)
+(Basé sur les retards réels, estime si la deadline est réaliste)
 """
 
 FALLBACK_MESSAGES = {

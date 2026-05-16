@@ -11,12 +11,13 @@ sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 logger        = logging.getLogger(__name__)
 SEUIL_RISQUE  = 0.65
 SEUIL_CHARGE  = 85.0
-INTERVALLE    = 30 # minute
+INTERVALLE    = 1 # minute (Monitoring plus réactif)
 
 
 async def check_project(project_id: str):
     from services.redmine_client import redmine
     from services.redis_client   import push_alert, cache_metrics, cache_risk
+    from services.websocket_manager import manager
 
     try:
         today   = str(date.today())
@@ -28,21 +29,63 @@ async def check_project(project_id: str):
         cache_metrics(project_id, metrics_to_cache)
         logger.info(f"[Monitor] Métriques en cache pour {project_id}: {metrics_to_cache}")
 
-        # ── Alertes retard ────────────────────────────────────
+        # ── Alertes retard (Détection de changement d'état) ──────────────────
+        from services.redis_client import r as redis_conn
         for issue in redmine.get_overdue_issues(project_id):
             due   = issue.get("due_date", "")
             delay = (date.today() - date.fromisoformat(due)).days if due else 0
-            push_alert(project_id, {
-                "type":    "retard",
-                "level":   "critique" if delay >= 5 else "warning",
-                "message": f"Tâche #{issue['id']} en retard de {delay}j : {issue['subject'][:50]}",
-                "issue_id": issue["id"],
-            })
+            
+            alert_key = f"alert_sent:{project_id}:retard:{issue['id']}"
+            if not redis_conn.exists(alert_key):
+                push_alert(project_id, {
+                    "type":    "retard",
+                    "level":   "critique" if delay >= 5 else "warning",
+                    "message": f"NOUVEAU : Tâche #{issue['id']} en retard de {delay}j : {issue['subject'][:50]}",
+                    "issue_id": issue["id"],
+                })
+                # On expire l'alerte après 24h pour permettre un rappel si pas résolu le lendemain
+                redis_conn.setex(alert_key, 86400, "1")
+                # Broadcast temps réel !
+                await manager.broadcast_to_project(project_id, {
+                    "type": "new_alert",
+                    "alert": {
+                        "type": "retard",
+                        "level": "critique" if delay >= 5 else "warning",
+                        "message": f"NOUVEAU : Tâche #{issue['id']} en retard de {delay}j : {issue['subject'][:50]}",
+                        "issue_id": issue["id"]
+                    }
+                })
+
+        # ── Alertes Priorité Haute (NOUVEAU) ──────────────────────────
+        for issue in issues:
+            prio_id = issue.get("priority", {}).get("id") if isinstance(issue.get("priority"), dict) else issue.get("priority_id", 0)
+            prio_name = issue.get("priority", {}).get("name", "") if isinstance(issue.get("priority"), dict) else ""
+            
+            # 4 = Urgent, 5 = Immédiat (ou basé sur le nom)
+            if prio_id >= 4 or prio_name.lower() in ["urgent", "immédiat", "immediate", "high"]:
+                alert_key = f"alert_sent:{project_id}:urgent:{issue['id']}"
+                if not redis_conn.exists(alert_key):
+                    push_alert(project_id, {
+                        "type":    "priorité",
+                        "level":   "critique",
+                        "message": f"ALERTE : Nouveau ticket URGENT #{issue['id']} : {issue['subject'][:50]}",
+                        "issue_id": issue["id"],
+                    })
+                    redis_conn.setex(alert_key, 86400, "1") # Une fois par jour
+                    await manager.broadcast_to_project(project_id, {
+                        "type": "new_alert",
+                        "alert": {
+                            "type": "priorité",
+                            "level": "critique",
+                            "message": f"ALERTE : Nouveau ticket URGENT #{issue['id']} : {issue['subject'][:50]}",
+                            "issue_id": issue["id"]
+                        }
+                    })
 
         # ── Score de risque ───────────────────────────────────
         bugs = sum(1 for i in issues
-                   if i.get("tracker", {}).get("name","").lower() in ("anomalie","bug")
-                   and i.get("priority", {}).get("id", 0) >= 3)
+                   if (i.get("tracker") if isinstance(i.get("tracker"), str) else i.get("tracker", {}).get("name", "")).lower() in ("anomalie", "bug")
+                   and i.get("priority_id", 0) >= 3)
         total = max(metrics["total_issues"], 1)
         score = round(min(
             (metrics["overdue_issues"] / total)         * 0.40 +
@@ -53,24 +96,53 @@ async def check_project(project_id: str):
         cache_risk(project_id, {"risk_level": level, "risk_score": score, "bugs": bugs})
 
         if score >= SEUIL_RISQUE:
-            push_alert(project_id, {
-                "type":    "risque",
-                "level":   "critique" if score >= 0.80 else "warning",
-                "message": f"Risque projet ÉLEVÉ — score {score}/1.0",
-                "score":   score,
-            })
+            alert_key = f"alert_sent:{project_id}:risque"
+            if not redis_conn.exists(alert_key):
+                push_alert(project_id, {
+                    "type":    "risque",
+                    "level":   "critique" if score >= 0.80 else "warning",
+                    "message": f"ATTENTION : Risque projet ÉLEVÉ — score {score}/1.0",
+                    "score":   score,
+                })
+                # On garde l'alerte active pendant 4h (on ne prévient pas toutes les minutes)
+                redis_conn.setex(alert_key, 14400, "1")
+                # Broadcast temps réel !
+                await manager.broadcast_to_project(project_id, {
+                    "type": "new_alert",
+                    "alert": {
+                        "type": "risque",
+                        "level": "critique" if score >= 0.80 else "warning",
+                        "message": f"ATTENTION : Risque projet ÉLEVÉ — score {score}/1.0",
+                        "score": score
+                    }
+                })
 
         # ── Surcharge équipe ──────────────────────────────────
         for name, hours in redmine.get_time_by_user(project_id).items():
             load = min((hours / 40) * 100, 100)
             if load >= SEUIL_CHARGE:
-                push_alert(project_id, {
-                    "type":    "surcharge",
-                    "level":   "critique" if load >= 95 else "warning",
-                    "message": f"{name} surchargé à {load:.0f}% ({hours}h loguées)",
-                    "member":  name,
-                    "load":    load,
-                })
+                alert_key = f"alert_sent:{project_id}:surcharge:{name}"
+                if not redis_conn.exists(alert_key):
+                    push_alert(project_id, {
+                        "type":    "surcharge",
+                        "level":   "critique" if load >= 95 else "warning",
+                        "message": f"SURCHARGE : {name} est à {load:.0f}% de charge",
+                        "member":  name,
+                        "load":    load,
+                    })
+                    # On évite de répéter l'alerte de surcharge pendant 8h
+                    redis_conn.setex(alert_key, 28800, "1")
+                    # Broadcast temps réel !
+                    await manager.broadcast_to_project(project_id, {
+                        "type": "new_alert",
+                        "alert": {
+                            "type": "surcharge",
+                            "level": "critique" if load >= 95 else "warning",
+                            "message": f"SURCHARGE : {name} est à {load:.0f}% de charge",
+                            "member": name,
+                            "load": load
+                        }
+                    })
 
         logger.info(f"[Monitor] {project_id} — score risque={score}")
 
@@ -106,7 +178,7 @@ def start_monitor():
         id="monitor", replace_existing=True,
     )
     scheduler.start()
-    logger.info(f"[Monitor] Démarré — Redis — toutes les {INTERVALLE} min")
+    logger.info(f"[Monitor] Démarré — Réactif — toutes les {INTERVALLE} min")
 
 def stop_monitor():
     if scheduler.running:

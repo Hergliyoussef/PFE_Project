@@ -2,8 +2,8 @@ import logging
 import json
 from typing import Literal, Dict, Any
 from pydantic import BaseModel, Field
-from langchain_core.messages import HumanMessage
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.messages import HumanMessage, AIMessage, BaseMessage
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import PydanticOutputParser
 from langchain_core.runnables import RunnableLambda, RunnablePassthrough
 from agents.state import AgentState
@@ -26,39 +26,72 @@ class RouterDecision(BaseModel):
 
 parser = PydanticOutputParser(pydantic_object=RouterDecision)
 
-SYSTEM_PROMPT = f"""Tu es l'intelligence centrale d'un chatbot de gestion de projet.
-Ton rôle est de choisir l'agent spécialisé (analyse, rapporteur) ou de gérer la conversation générale liée au projet.
+SYSTEM_PROMPT = """Tu es le cerveau d'un chatbot de gestion de projet. Tu dois décider quel agent appeler en fonction de la question ET de l'historique.
 
-RÈGLES DE CONVERSATION :
-1. SALUTATIONS : Si l'utilisateur te dit bonjour ou te salue, réponds poliment (ex: "Bonjour ! Comment puis-je vous aider avec vos projets aujourd'hui ?") en utilisant l'action "hors_sujet".
-2. ANALYSE : Pour les questions sur les données, les retards, les risques ou les calculs, utilise "analyse".
-3. RAPPORT : Pour les résumés, les comptes-rendus ou les synthèses, utilise "rapporteur".
-4. PLANIFICATION : Pour toute action de CRÉATION, AJOUT, SUPPRESSION, MODIFICATION, CHANGEMENT, MISE À JOUR (ex: "Crée un projet", "Ajoute un utilisateur", "Supprime la tâche", "Modifie le membre", "Update l'email") utilise IMPÉRATIVEMENT "planning".
-5. HORS-SUJET TOTAL : Si la question n'a aucun lien avec le travail (ex: sport, cuisine), utilise "hors_sujet" et réponds : "{REFUSAL_MSG}"
+RÈGLES :
+1. Si l'utilisateur demande des chiffres, métriques, membres ou l'état du projet -> action="analyse"
+2. Si l'utilisateur demande de créer, modifier ou supprimer quelque chose -> action="planning"
+3. Si l'utilisateur demande un rapport ou une synthèse -> action="rapporteur"
+4. Pour le reste (Bonjour, Merci, formatage, questions sur le dernier message) -> action="hors_sujet"
 
-Tu dois TOUJOURS répondre au format JSON."""
+IMPORTANT : Réponds TOUJOURS au format JSON suivant :
+{{
+  "action": "analyse" | "planning" | "rapporteur" | "hors_sujet",
+  "intent": "court résumé de l'intention",
+  "message": "Ta réponse directe si tu as choisi hors_sujet (ex: Bonjour ! ou Voici le tableau :)"
+}}
+
+Regarde bien les messages précédents pour comprendre les questions courtes comme 'en tableau' ou 'pourquoi ?'."""
+
+def convert_history_to_messages(history: list) -> list[BaseMessage]:
+    """Convertit une liste de dicts (Redis/API) en objets Messages LangChain."""
+    messages = []
+    for msg in (history or []):
+        if isinstance(msg, dict):
+            role = msg.get("role")
+            content = msg.get("content", "")
+            if role == "assistant":
+                messages.append(AIMessage(content=content))
+            else:
+                # Tous les autres rôles (CEO, PROJECT_MANAGER) sont traités comme HumanMessage
+                messages.append(HumanMessage(content=content))
+        elif isinstance(msg, BaseMessage):
+            messages.append(msg)
+    return messages
 
 def get_router_chain():
     llm = get_llm("supervisor")
     prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT + "\n{format_instructions}"),
-        ("human", "Question : {question}"),
-    ]).partial(format_instructions=parser.get_format_instructions())
-    # On retire le parser de la chaîne brute pour gérer les erreurs manuellement
+        ("system", SYSTEM_PROMPT),
+        MessagesPlaceholder(variable_name="history"),
+        ("human", "{question}"),
+    ])
     return prompt | llm
 
 # --- LOGIQUE DE ROUTAGE SÉCURISÉE ---
 
-def _get_decision(question: str) -> RouterDecision:
+def _get_decision(question: str, history: list) -> RouterDecision:
     """Invoque l'LLM et tente de parser le JSON, avec repli sécurisé."""
+    print(f"\n[DEBUG HISTORY] Supervisor reçu {len(history)} messages d'historique.")
+    for i, m in enumerate(history):
+        print(f"  -> Msg {i} [{m.__class__.__name__}]: {m.content[:100]}")
+    
     chain = get_router_chain()
     try:
-        response = chain.invoke({"question": question})
+        response = chain.invoke({"question": question, "history": history})
         # Si la réponse est déjà un objet (certains LLMs le font avec bind_tools), on l'utilise
         content = response.content if hasattr(response, "content") else str(response)
         
         try:
-            return parser.parse(content)
+            # Nettoyage si le modèle ajoute du texte avant/après le JSON
+            clean_content = content.strip()
+            if "```json" in clean_content:
+                clean_content = clean_content.split("```json")[1].split("```")[0].strip()
+            elif "{" in clean_content:
+                clean_content = "{" + clean_content.split("{", 1)[1].rsplit("}", 1)[0] + "}"
+                
+            data = json.loads(clean_content)
+            return RouterDecision(**data)
         except Exception:
             # Si le parsing échoue mais que le message a l'air d'une salutation ou d'une réponse textuelle, on le garde
             # Sinon, si c'est un refus connu ou un bug, on utilise le REFUSAL_MSG
@@ -97,14 +130,73 @@ def _execute_routing(inputs: Dict[str, Any]) -> Dict[str, Any]:
 # La chaîne maîtresse
 master_chain = (
     RunnablePassthrough.assign(
-        decision=lambda x: _get_decision(x["last_msg"])
+        decision=lambda x: _get_decision(x["last_msg"], x["state"]["messages"][:-1])
     ) 
     | RunnableLambda(_execute_routing)
 )
 
-def run_agent(question: str, project_id: str, user_id: str, user_role: str = "PROJECT_MANAGER", history: list = None, project_name: str = "") -> dict:
+async def run_agent_stream(question: str, project_id: str, user_id: str, user_role: str = "PROJECT_MANAGER", history: list = None, project_name: str = ""):
+    """Version asynchrone qui streame la réponse finale."""
+    converted_history = convert_history_to_messages(history)
+    
     state: AgentState = {
-        "messages": list(history or []) + [HumanMessage(content=question)],
+        "messages": converted_history + [HumanMessage(content=question)],
+        "project_id": str(project_id),
+        "project_name": project_name,
+        "user_id": user_id,
+        "user_role": user_role,
+        "next_agent": "supervisor",
+        "final_answer": "",
+        "data": {},
+        "intent": "general",
+        "last_msg": question
+    }
+
+    try:
+        # 1. Obtenir la décision (synchrone pour l'instant car c'est rapide)
+        decision = _get_decision(question, converted_history)
+        
+        # 2. Exécuter l'agent correspondant de manière asynchrone si possible
+        # Pour simplifier et garantir la stabilité, on exécute l'agent et on streame son résultat
+        # NOTE: Dans une version avancée, on utiliserait .astream() sur les noeuds
+        final_state = _execute_routing({"decision": decision, "state": state})
+        answer = final_state.get("final_answer", "")
+        # Utiliser l'intent du noeud final s'il existe (ex: 'planning')
+        final_intent = final_state.get("intent", decision.intent)
+        final_data = final_state.get("data", {})
+        
+        # Simuler le streaming du texte final
+        # Si c'est du planning, le final_answer est souvent du JSON, on ne veut pas l'afficher tel quel
+        # On affiche plutôt le summary du planning s'il existe
+        display_text = answer
+        if final_intent == "planning" and isinstance(final_data, dict) and "summary" in final_data:
+            display_text = final_data["summary"]
+
+        words = display_text.split(" ")
+        for i, word in enumerate(words):
+            yield f"data: {json.dumps({'token': word + (' ' if i < len(words)-1 else ''), 'intent': final_intent, 'agent': decision.action, 'data': final_data})}\n\n"
+            import asyncio
+            await asyncio.sleep(0.01) # Un peu plus rapide
+
+        # 3. Sauvegarde (Redis + Postgres)
+        from services.redis_client import save_message
+        save_message(user_id, f"{project_id}:stream", "user", question)
+        # Pour le planning, on sauve le résumé ou l'answer propre
+        save_message(user_id, f"{project_id}:stream", "assistant", display_text, intent=final_intent, data=final_data)
+        
+        yield "data: [DONE]\n\n"
+
+    except Exception as e:
+        logger.error(f"[Stream Agent] Erreur : {e}")
+        yield f"data: {json.dumps({'token': 'Erreur technique...', 'intent': 'error'})}\n\n"
+        yield "data: [DONE]\n\n"
+
+def run_agent(question: str, project_id: str, user_id: str, user_role: str = "PROJECT_MANAGER", history: list = None, project_name: str = "") -> dict:
+    # 1. Conversion de l'historique en objets Messages
+    converted_history = convert_history_to_messages(history)
+    
+    state: AgentState = {
+        "messages": converted_history + [HumanMessage(content=question)],
         "project_id": str(project_id),
         "project_name": project_name,
         "user_id": user_id,

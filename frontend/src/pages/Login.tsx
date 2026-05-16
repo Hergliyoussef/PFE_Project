@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useState, useEffect } from "react"
 import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
@@ -14,6 +14,14 @@ export default function Login() {
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
+  // Redirection si déjà connecté
+  useEffect(() => {
+    const token = Cookies.get("pm_chatbot_access_token")
+    if (token) {
+      navigate("/chat")
+    }
+  }, [navigate])
+
   const handleLogin = async (e: React.FormEvent) => {
     e.preventDefault()
     if (!login || !password) {
@@ -28,7 +36,7 @@ export default function Login() {
       const { access_token, user } = response.data
       
       // Stockage sécurisé
-      // Stockage sécurisé
+     
       Cookies.set("pm_chatbot_access_token", access_token, { expires: 1/24 }) // 1h
       localStorage.removeItem("pm_last_conv_id") // Reset chat pour le nouvel utilisateur
       localStorage.setItem("pm_user", JSON.stringify(user))

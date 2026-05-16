@@ -3,6 +3,7 @@ import { Button } from "@/components/ui/button"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Plus, MessageSquare, Trash2, LogOut, FolderKanban, LayoutDashboard, ShieldCheck } from "lucide-react"
+import { ThemeToggle } from "@/components/ui/theme-toggle"
 import api from "@/api/api"
 import Cookies from "js-cookie"
 import { useNavigate } from "react-router-dom"
@@ -39,11 +40,13 @@ interface UserData {
 export default function Sidebar({
   activeConvId,
   onSelectConv,
-  onNewChat
+  onNewChat,
+  onProjectChange
 }: {
   activeConvId?: string,
   onSelectConv: (id: string) => void,
-  onNewChat: () => void
+  onNewChat: () => void,
+  onProjectChange?: (projectId: string) => void
 }) {
   const [conversations, setConversations] = useState<Conversation[]>([])
   const [projects, setProjects] = useState<Project[]>([])
@@ -108,7 +111,11 @@ export default function Sidebar({
   const handleProjectChange = (value: string) => {
     setActiveProject(value)
     localStorage.setItem("pm_active_project", value)
-    onNewChat()
+    if (onProjectChange) {
+      onProjectChange(value)
+    } else {
+      onNewChat()
+    }
   }
 
   const filteredConversations = conversations.filter(c => c.project_id === activeProject)
@@ -125,36 +132,39 @@ export default function Sidebar({
   const isCEO = checkIsCEO();
 
   return (
-    <div className="w-72 h-screen bg-[#0b0f1a] border-r border-white/5 flex flex-col">
+    <div className="w-72 h-screen bg-slate-100 dark:bg-card border-r border-border flex flex-col transition-all duration-300">
       {/* Header & Projects */}
       <div className="p-4 space-y-4">
-        <div className="flex items-center gap-3 px-2 py-2">
-          <div className="relative group">
-            <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full animate-pulse group-hover:bg-primary/40 transition-all duration-500" />
-            <div className="relative w-12 h-12 bg-gradient-to-br from-primary to-emerald-600 rounded-[14px] flex items-center justify-center font-black text-primary-foreground shadow-2xl shadow-primary/30 border border-white/10 animate-float">
-              PM
+        <div className="flex items-center justify-between px-2 py-2">
+          <div className="flex items-center gap-3">
+            <div className="relative group">
+              <div className="absolute inset-0 bg-primary/20 blur-xl rounded-full animate-pulse group-hover:bg-primary/40 transition-all duration-500" />
+              <div className="relative w-12 h-12 bg-gradient-to-br from-primary to-emerald-600 rounded-[14px] flex items-center justify-center font-black text-primary-foreground shadow-2xl shadow-primary/30 border border-border animate-float">
+                PM
+              </div>
+            </div>
+            <div className="flex flex-col leading-tight">
+              <span className="font-black text-foreground tracking-tight text-[13px]">Chatbot IA</span>
+              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Gestion de Projet</span>
             </div>
           </div>
-          <div className="flex flex-col leading-tight">
-            <span className="font-black text-slate-100 tracking-tight text-[13px]">Chatbot IA</span>
-            <span className="text-[10px] font-bold text-slate-500 uppercase tracking-widest">Gestion de Projet</span>
-          </div>
+          <ThemeToggle />
         </div>
 
         <div className="px-1">
           <Select value={activeProject} onValueChange={handleProjectChange}>
-            <SelectTrigger className="w-full bg-primary/10 border-primary/20 text-slate-100 h-12 rounded-2xl hover:bg-primary/20 transition-all shadow-lg shadow-primary/5">
+            <SelectTrigger className="w-full bg-primary/10 border-primary/20 text-foreground h-12 rounded-2xl hover:bg-primary/20 transition-all shadow-lg shadow-primary/5">
               <div className="flex items-center gap-2.5 truncate">
                 <div className="p-1.5 bg-primary/20 rounded-lg text-primary">
                   <FolderKanban className="w-4 h-4" strokeWidth={2.5} />
                 </div>
                 <div className="flex flex-col items-start truncate leading-tight">
                   <span className="text-[9px] font-black text-primary uppercase tracking-widest">Projet</span>
-                  <SelectValue placeholder="Choisir un projet" className="font-bold text-xs" />
+                  <SelectValue placeholder="Choisir un projet" className="font-bold text-xs text-foreground" />
                 </div>
               </div>
             </SelectTrigger>
-            <SelectContent className="bg-slate-900 border-white/10 text-slate-200 rounded-2xl shadow-2xl">
+            <SelectContent className="bg-popover border-border text-popover-foreground rounded-2xl shadow-2xl">
               {projects.map((proj) => (
                 <SelectItem key={proj.identifier} value={proj.identifier} className="rounded-xl focus:bg-primary/20 focus:text-primary">
                   {proj.name}
@@ -166,7 +176,7 @@ export default function Sidebar({
 
         <Button
           variant="outline"
-          className="w-full justify-start gap-2 border-white/10 bg-primary/5 hover:bg-primary/10 text-primary border-primary/20 font-bold"
+          className="w-full justify-start gap-2 border-border bg-primary/5 hover:bg-primary/10 text-primary font-bold"
           onClick={onNewChat}
         >
           <Plus className="w-4 h-4" strokeWidth={2.5} />
@@ -174,7 +184,7 @@ export default function Sidebar({
         </Button>
       </div>
 
-      <Separator className="bg-white/5" />
+      <Separator className="bg-border" />
 
       {/* History */}
       <div className="flex-1 overflow-hidden flex flex-col py-2">
@@ -190,7 +200,7 @@ export default function Sidebar({
                 role="button"
                 className={`group w-full flex items-center gap-3 px-3 py-2.5 rounded-lg text-sm transition-all relative cursor-pointer ${activeConvId === conv.id
                     ? "bg-primary/10 text-primary font-bold"
-                    : "text-slate-400 hover:bg-white/5 hover:text-slate-200"
+                    : "text-muted-foreground hover:bg-muted hover:text-foreground"
                   }`}
               >
                 <div className="relative shrink-0">
@@ -218,39 +228,41 @@ export default function Sidebar({
         </ScrollArea>
       </div>
 
-      <Separator className="bg-white/5" />
+      <Separator className="bg-border" />
 
       {/* Footer Navigation & Profile */}
       <div className="p-4 space-y-4">
         <div className="space-y-1">
           <Button
             variant="ghost"
-            className="w-full justify-start gap-3 text-slate-400 hover:text-slate-100 hover:bg-white/5 px-3 h-10 font-bold"
-            onClick={() => navigate("/dashboard")}
+            className="w-full justify-start gap-3 text-muted-foreground hover:text-foreground hover:bg-muted px-3 h-10 font-bold"
+            onClick={() => navigate(`/dashboard/${activeProject}`)}
           >
             <LayoutDashboard className="w-4 h-4" strokeWidth={2.5} />
             Tableau de Bord
           </Button>
-          <Button
-            variant="ghost"
-            className="w-full justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-500/10 px-3 h-10 font-bold"
-            onClick={handleLogout}
-          >
-            <LogOut className="w-4 h-4" strokeWidth={2.5} />
-            Déconnexion
-          </Button>
+          <div className="flex items-center gap-2 px-3">
+            <Button
+              variant="ghost"
+              className="flex-1 justify-start gap-3 text-red-400 hover:text-red-300 hover:bg-red-500/10 h-10 font-bold"
+              onClick={handleLogout}
+            >
+              <LogOut className="w-4 h-4" strokeWidth={2.5} />
+              Déconnexion
+            </Button>
+          </div>
         </div>
 
         {/* User Profile Block */}
         {user && (
-          <div className="bg-white/5 border border-white/10 rounded-2xl p-3 flex items-center gap-3">
+          <div className="bg-muted border border-border rounded-2xl p-3 flex items-center gap-3">
             <Avatar className="w-10 h-10 border border-white/10">
               <AvatarFallback className="bg-primary/20 text-primary font-bold text-xs uppercase">
                 {user.firstname?.[0]}{user.lastname?.[0]}
               </AvatarFallback>
             </Avatar>
             <div className="flex-1 overflow-hidden">
-              <div className="text-xs font-bold text-slate-100 truncate">
+              <div className="text-xs font-bold text-foreground truncate">
                 {user.firstname} {user.lastname}
               </div>
               <div className="flex items-center gap-1.5 mt-0.5">

@@ -15,7 +15,9 @@ from db.models import Conversation as DBConv
 
 @tool
 def get_project_metrics(project_id: str) -> str:
-    """Retourne les métriques globales : avancement, retards, complétion."""
+    """Retourne les métriques globales : avancement, retards, complétion.
+    IMPORTANT : 'project_id' doit être l'identifiant technique (slug), ex: 'gestpro' et non 'GestPro'.
+    """
     try:
         data = redmine.compute_project_metrics(project_id)
         # Ajout d'une note explicite contextuelle pour éviter que l'IA ne se trompe de métrique 
@@ -27,7 +29,9 @@ def get_project_metrics(project_id: str) -> str:
 
 @tool
 def get_overdue_issues(project_id: str) -> str:
-    """Liste les tâches dont la date d'échéance est dépassée."""
+    """Liste les tâches dont la date d'échéance est dépassée.
+    IMPORTANT : 'project_id' doit être l'identifiant technique (slug).
+    """
     try:
         issues = redmine.get_overdue_issues(project_id)
         result = [{

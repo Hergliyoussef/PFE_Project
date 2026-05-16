@@ -2,7 +2,7 @@ import logging
 import json
 from typing import Dict, Any, Literal, Optional
 from pydantic import BaseModel, Field
-from langchain_core.prompts import ChatPromptTemplate
+from langchain_core.prompts import ChatPromptTemplate, MessagesPlaceholder
 from langchain_core.output_parsers import PydanticOutputParser
 from services.llm_client import get_llm
 from agents.state import AgentState
@@ -53,12 +53,6 @@ class PlanningDecision(BaseModel):
 
 parser = PydanticOutputParser(pydantic_object=PlanningDecision)
 
-# Format compact pour éviter l'erreur "looping content" de Groq
-# (le format_instructions auto-généré est trop verbeux et répétitif)
-COMPACT_FORMAT = """Réponds UNIQUEMENT avec ce JSON (sans markdown, sans explication) :
-{"actions": [{"action_type": "<type>", "parameters": {"project_id": "", "user_id": "", "login": "", "firstname": "", "lastname": "", "mail": "", "password": "PFE@2024", "role": "", "role_ids": [], "subject": "", "description": "", "tracker_id": null, "priority_id": null, "estimated_hours": null, "done_ratio": null, "issue_id": null, "status_id": null, "notes": null, "identifier": "", "name": "", "utilisateur": "", "copy_roles_from": ""}, "description": "<description courte>"}], "summary": "<résumé>"}
-Types valides: create_project, create_user, update_user, delete_user, delete_project, add_project_member, remove_project_member, create_issue, update_issue, delete_issue"""
-
 SYSTEM_PROMPT = """Tu es un Agent de Planification spécialisé dans la préparation d'opérations d'écriture sur Redmine.
 Ton rôle est de comprendre l'intention de l'utilisateur (ex: créer un projet, ajouter un utilisateur, supprimer un projet, assigner un chef de projet) et d'en extraire les paramètres nécessaires.
 
@@ -86,6 +80,18 @@ RÈGLES IMPORTANTES :
 8. RÔLES : Utilise le champ 'role' ("CEO", "Chef de projet", "Développeur", "Rapporteur"). IDs: CEO=6, Chef de projet=3, Developpeur=4, Rapporteur=5.
 9. PROJET ACTUEL : Si non précisé, utilise : {current_project_id} ({current_project_name}).
 
+REQUIS : Réponds UNIQUEMENT avec un objet JSON valide suivant EXACTEMENT cette structure :
+{{
+  "actions": [
+    {{
+      "action_type": "type_ici",
+      "parameters": {{ ... }},
+      "description": "description_ici"
+    }}
+  ],
+  "summary": "résumé_global_ici"
+}}
+
 {format_instructions}
 """
 
@@ -93,8 +99,9 @@ def get_planning_chain():
     llm = get_llm("planning")
     prompt = ChatPromptTemplate.from_messages([
         ("system", SYSTEM_PROMPT),
+        MessagesPlaceholder(variable_name="history"),
         ("human", "{question}")
-    ]).partial(format_instructions=COMPACT_FORMAT)
+    ]).partial(format_instructions=parser.get_format_instructions())
     
     return prompt | llm
 
@@ -107,8 +114,12 @@ def planning_node(state: AgentState) -> dict:
     chain = get_planning_chain()
     
     try:
+        # On ne passe pas le dernier message (la question actuelle) dans l'historique car il est déjà dans "human"
+        history_context = state["messages"][:-1]
+        
         response = chain.invoke({
             "question": last_msg,
+            "history": history_context,
             "current_project_id": project_id,
             "current_project_name": project_name,
             "user_role": state.get("user_role", "PROJECT_MANAGER")

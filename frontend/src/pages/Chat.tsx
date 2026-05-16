@@ -5,6 +5,7 @@ import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Send, Loader2, Bot, User as UserIcon, CheckCircle2, XCircle, AlertTriangle, Clock, Calendar, Shield, BarChart3, Trophy, Target, Zap, Trash2 } from "lucide-react"
 import api from "@/api/api"
+import Cookies from "js-cookie"
 import ReactMarkdown from "react-markdown"
 import { toast } from "sonner"
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as ChartTooltip } from "recharts"
@@ -26,6 +27,32 @@ export default function Chat() {
   })
   const scrollRef = useRef<HTMLDivElement>(null)
   const [projectName, setProjectName] = useState("Projet")
+  const [activeAlerts, setActiveAlerts] = useState<any[]>([])
+
+  // --- WebSocket pour Temps Réel ---
+  useEffect(() => {
+    const pid = localStorage.getItem("pm_active_project");
+    if (!pid) return;
+
+    const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const wsUrl = `${wsProtocol}//${window.location.hostname}:8000/ws/dashboard/${pid}`;
+    const socket = new WebSocket(wsUrl);
+
+    socket.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data);
+        if (data?.type === "new_alert") {
+          const alertId = Date.now() + Math.random();
+          const newAlert = { ...data.alert, id: alertId };
+          setActiveAlerts(prev => [newAlert, ...prev]);
+          setTimeout(() => {
+            setActiveAlerts(prev => prev.filter(a => a.id !== alertId));
+          }, 7000);
+        }
+      } catch {}
+    };
+    return () => socket.close();
+  }, []);
 
   useEffect(() => {
     const userData = localStorage.getItem("pm_user")
@@ -39,30 +66,7 @@ export default function Chat() {
         handleSelectConv(activeConvId)
       }
     }
-
-    const alertInterval = setInterval(fetchAlerts, 60000)
-    fetchAlerts()
-
-    return () => clearInterval(alertInterval)
   }, [])
-
-  const fetchAlerts = async () => {
-    const pid = localStorage.getItem("pm_active_project")
-    if (!pid) return
-    try {
-      const res = await api.get(`/alerts/${pid}`)
-      const alerts = res.data.alerts || []
-      alerts.forEach((alert: any) => {
-        if (alert.level === "critique") {
-          toast.error(alert.message)
-        } else {
-          toast.warning(alert.message)
-        }
-      })
-    } catch (e) {
-      console.error("Erreur alertes", e)
-    }
-  }
 
   useEffect(() => {
     if (scrollRef.current) {
@@ -81,42 +85,79 @@ export default function Chat() {
     }
 
     const userMessage: Message = { role: "user", content: input }
-    setMessages(prev => [...prev, userMessage])
     setInput("")
     setLoading(true)
 
+    // On ajoute le message utilisateur et un message assistant vide
+    setMessages(prev => [
+      ...prev,
+      userMessage,
+      { role: "assistant", content: "", display_type: "text", data: {} }
+    ]);
+
     try {
-      const response = await api.post("/chat", {
-        question: input,
-        project_id: activeProject,
-        project_name: projectName,
-        conversation_id: activeConvId,
-        history: messages.slice(-5)
-      })
-
-      const botMessage: Message = {
-        id: response.data.ai_message_id,
-        role: "assistant",
-        content: response.data.answer || response.data.final_answer,
-        display_type: response.data.display_type,
-        data: response.data.data
-      }
-
-      // Mettre à jour le message utilisateur avec son ID
-      setMessages(prev => {
-        const newMsgs = [...prev];
-        if (newMsgs.length > 0) {
-          newMsgs[newMsgs.length - 1].id = response.data.user_message_id;
-        }
-        return [...newMsgs, botMessage];
+      const token = Cookies.get("pm_chatbot_access_token")
+      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/chat/stream`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${token}`
+        },
+        body: JSON.stringify({
+          question: input,
+          project_id: activeProject,
+          project_name: projectName,
+          conversation_id: activeConvId,
+          history: messages.slice(-10)
+        })
       });
 
-      if (response.data.conversation_id) {
-        setActiveConvId(response.data.conversation_id)
-        localStorage.setItem("pm_last_conv_id", response.data.conversation_id)
+      if (!response.body) throw new Error("Pas de corps de réponse");
+
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      let fullContent = "";
+
+      while (true) {
+        const { value, done } = await reader.read();
+        if (done) break;
+
+        const chunk = decoder.decode(value);
+        const lines = chunk.split("\n\n");
+
+        for (const line of lines) {
+          if (line.startsWith("data: ")) {
+            const dataStr = line.replace("data: ", "").trim();
+            if (dataStr === "[DONE]") continue;
+
+            try {
+              const parsed = JSON.parse(dataStr);
+              if (parsed.token) {
+                fullContent += parsed.token;
+                // Mise à jour du DERNIER message (celui qu'on vient d'ajouter)
+                setMessages(prev => {
+                  const newMsgs = [...prev];
+                  if (newMsgs.length > 0) {
+                    const lastIdx = newMsgs.length - 1;
+                    newMsgs[lastIdx] = {
+                      ...newMsgs[lastIdx],
+                      content: fullContent,
+                      display_type: parsed.intent === 'planning' ? 'action_confirmation' : 'text',
+                      data: parsed.data || {}
+                    };
+                  }
+                  return newMsgs;
+                });
+              }
+            } catch (e) {
+              console.error("Erreur parse chunk", e);
+            }
+          }
+        }
       }
     } catch (err) {
-      setMessages(prev => [...prev, { role: "assistant", content: "Désolé, une erreur est survenue lors de la communication avec l'assistant." }])
+      console.error("Erreur fatale stream:", err);
+      toast.error("Erreur de communication avec l'assistant.");
     } finally {
       setLoading(false)
     }
@@ -175,11 +216,30 @@ export default function Chat() {
     setMessages([])
   }
 
+  const handleProjectChange = (projectId: string) => {
+    handleNewChat()
+
+    // Update project name from local storage (Sidebar already updated it)
+    const userDataStr = localStorage.getItem("pm_user")
+    if (userDataStr) {
+      const user = JSON.parse(userDataStr)
+      const proj = user.authorized_projects?.find((p: any) => p.identifier === projectId)
+      if (proj) setProjectName(proj.name)
+    }
+
+    // Refresh alerts for new project
+    fetchAlerts()
+  }
+
   const handleTaskExecution = async (actions: any[], msgIndex: number, accept: boolean) => {
     if (!accept) {
       setMessages(prev => {
         const newMessages = [...prev]
-        newMessages[msgIndex] = { ...newMessages[msgIndex], content: "Opérations annulées par l'utilisateur." }
+        newMessages[msgIndex] = { 
+          ...newMessages[msgIndex], 
+          content: "Opérations annulées par l'utilisateur.",
+          display_type: "text" 
+        }
         return newMessages
       })
       toast.info("Opérations annulées.")
@@ -199,7 +259,11 @@ export default function Chat() {
       toast.success(`${actions.length} action(s) exécutée(s) avec succès !`)
       setMessages(prev => {
         const newMessages = [...prev]
-        newMessages[msgIndex] = { ...newMessages[msgIndex], content: "Toutes les actions ont été validées et exécutées avec succès sur Redmine." }
+        newMessages[msgIndex] = { 
+          ...newMessages[msgIndex], 
+          content: "Toutes les actions ont été validées et exécutées avec succès sur Redmine.",
+          display_type: "text" 
+        }
         return newMessages
       })
     } catch (e: any) {
@@ -210,20 +274,45 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex h-screen bg-[#0b0f1a] text-slate-100 overflow-hidden font-sans">
+    <div className="flex h-screen bg-background text-foreground overflow-hidden font-sans">
       <Sidebar
         activeConvId={activeConvId}
         onSelectConv={handleSelectConv}
         onNewChat={handleNewChat}
+        onProjectChange={handleProjectChange}
       />
 
       <main className="flex-1 flex flex-col relative bg-[radial-gradient(circle_at_50%_50%,rgba(99,102,241,0.02),transparent)]">
+        {/* Alert Notifications Overlay */}
+        <div className="fixed top-20 right-8 z-[101] flex flex-col gap-4 max-w-md">
+          {activeAlerts.map((alert) => (
+            <div 
+              key={alert.id} 
+              className={`p-4 rounded-2xl border shadow-2xl backdrop-blur-2xl animate-fade-in-right flex items-start gap-4 
+                ${alert.level === 'critique' ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}
+            >
+              <div className={`p-2 rounded-lg ${alert.level === 'critique' ? 'bg-red-500/20' : 'bg-amber-500/20'}`}>
+                <AlertTriangle className="w-5 h-5" />
+              </div>
+              <div className="flex-1 space-y-1">
+                <div className="text-[10px] font-black uppercase tracking-widest opacity-70">Alerte IA {alert.type}</div>
+                <p className="text-xs font-bold leading-relaxed text-white">{alert.message}</p>
+              </div>
+              <button 
+                onClick={() => setActiveAlerts(prev => prev.filter(a => a.id !== alert.id))}
+                className="text-white/20 hover:text-white transition-colors"
+              >
+                <Zap className="w-4 h-4 rotate-45" />
+              </button>
+            </div>
+          ))}
+        </div>
         {/* Floating Header */}
-        <header className="h-12 border-b border-white/5 flex items-center justify-between px-8 bg-card/40 backdrop-blur-2xl sticky top-0 z-20 animate-fade-in">
+        <header className="h-16 border-b border-border flex items-center justify-between px-8 bg-slate-100/80 dark:bg-slate-950/80 backdrop-blur-2xl sticky top-0 z-20 animate-fade-in transition-all duration-300">
           <div className="flex flex-col">
             <div className="flex items-center gap-2.5">
               <div className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(154,205,50,0.5)]" />
-              <h2 className="font-black text-base tracking-tight text-white">{projectName || "Sélectionner un projet"}</h2>
+              <h2 className="font-black text-base tracking-tight text-foreground">{projectName || "Sélectionner un projet"}</h2>
             </div>
             <div className="flex items-center gap-2 mt-0.5">
               <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Projet Actuel:</span>
@@ -236,7 +325,7 @@ export default function Chat() {
               : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
               }`}>
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse" />
-              <span className="text-[10px] font-black uppercase tracking-[0.2em]">
+              <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">
                 {localStorage.getItem("pm_user") && (JSON.parse(localStorage.getItem("pm_user")!).roles?.some((r: string) => r.toUpperCase().includes("CEO")) || JSON.parse(localStorage.getItem("pm_user")!).role?.toUpperCase().includes("CEO"))
                   ? "Vue CEO"
                   : "Vue Project Manager"
@@ -249,7 +338,7 @@ export default function Chat() {
                 variant="ghost"
                 size="icon"
                 onClick={handleClearChat}
-                className="w-9 h-9 rounded-xl text-slate-500 hover:text-red-400 hover:bg-red-400/10 transition-colors"
+                className="w-9 h-9 rounded-xl text-slate-400 hover:text-red-400 hover:bg-red-400/10 transition-colors"
                 title="Supprimer la conversation"
               >
                 <Trash2 className="w-4 h-4" />
@@ -269,9 +358,9 @@ export default function Chat() {
                   </div>
                 </div>
                 <div className="space-y-2">
-                  <h1 className="text-4xl font-black text-white tracking-tighter sm:text-5xl">Analyse Intelligente</h1>
-                  <p className="text-slate-400 max-w-sm mx-auto leading-relaxed text-base font-medium">
-                    Posez vos questions sur le projet <span className="text-primary">{projectName}</span>. Je traite les données Redmine en temps réel.
+                  <h1 className="text-4xl font-black text-foreground tracking-tighter sm:text-5xl">Analyse Intelligente</h1>
+                  <p className="text-foreground max-w-sm mx-auto leading-relaxed text-base font-bold">
+                    Posez vos questions sur le projet <span className="text-primary font-black">{projectName}</span>. Je traite les données Redmine en temps réel.
                   </p>
                 </div>
               </div>
@@ -294,10 +383,10 @@ export default function Chat() {
                   </div>
 
                   <div className={`px-4 py-2.5 rounded-[20px] shadow-xl relative overflow-hidden transition-all hover:shadow-primary/20 ${msg.role === "assistant"
-                    ? "bg-white/[0.04] backdrop-blur-xl border border-white/5 text-slate-200"
-                    : "bg-primary/10 backdrop-blur-md border border-primary/30 text-white rounded-tr-none shadow-lg shadow-primary/5"
+                    ? "bg-card backdrop-blur-xl border border-border text-foreground"
+                    : "bg-primary/10 backdrop-blur-md border border-primary/30 text-foreground rounded-tr-none shadow-lg shadow-primary/5"
                     }`}>
-                    <div className="text-sm leading-relaxed prose prose-invert prose-p:my-0 prose-pre:bg-slate-950/50 prose-pre:border prose-pre:border-white/10 max-w-none pr-6 group relative">
+                    <div className="text-sm leading-relaxed prose prose-slate dark:prose-invert prose-p:my-0 prose-pre:bg-slate-950/50 prose-pre:border prose-pre:border-border max-w-none pr-6 group relative">
                       <ReactMarkdown>{msg.content}</ReactMarkdown>
 
                       {msg.id && (
@@ -657,6 +746,8 @@ export default function Chat() {
                                       }
 
                                       if ((key === 'user_id' || key === 'utilisateur') && isMissing) {
+                                        // Éviter d'afficher deux fois le champ si user_id et utilisateur sont tous deux vides
+                                        if (key === 'utilisateur') return null;
                                         const otherValue = action.parameters[key === 'user_id' ? 'utilisateur' : 'user_id'];
                                         if (otherValue && otherValue !== "") return null;
 
@@ -794,7 +885,7 @@ export default function Chat() {
                     )}
 
                     {msg.display_type === "issues_table" && msg.data && msg.data.issues && (
-                      <div className="mt-5 overflow-hidden bg-slate-950/40 rounded-2xl border border-white/5 shadow-2xl">
+                      <div className="mt-5 overflow-hidden bg-card rounded-2xl border border-border shadow-2xl">
                         <div className="p-4 bg-red-500/10 border-b border-white/5 flex items-center gap-2">
                           <AlertTriangle className="w-4 h-4 text-red-500" />
                           <h4 className="text-xs font-black uppercase tracking-widest text-red-400">Tâches en Retard</h4>
@@ -830,7 +921,7 @@ export default function Chat() {
                     )}
 
                     {msg.display_type === "risk_table" && msg.data && msg.data.issues && (
-                      <div className="mt-5 overflow-hidden bg-slate-950/40 rounded-2xl border border-white/5 shadow-2xl">
+                      <div className="mt-5 overflow-hidden bg-card rounded-2xl border border-border shadow-2xl">
                         <div className="p-4 bg-amber-500/10 border-b border-white/5 flex items-center gap-2">
                           <Shield className="w-4 h-4 text-amber-500" />
                           <h4 className="text-xs font-black uppercase tracking-widest text-amber-400">Analyse des Risques</h4>
@@ -878,7 +969,7 @@ export default function Chat() {
                     )}
 
                     {msg.display_type === "projects_table" && msg.data && msg.data.projects && (
-                      <div className="mt-5 overflow-hidden bg-slate-950/40 rounded-2xl border border-white/5 shadow-2xl">
+                      <div className="mt-5 overflow-hidden bg-card rounded-2xl border border-border shadow-2xl">
                         <div className="p-4 bg-primary/10 border-b border-white/5 flex items-center gap-2">
                           <BarChart3 className="w-4 h-4 text-primary" />
                           <h4 className="text-xs font-black uppercase tracking-widest text-white">État Global des Projets</h4>
@@ -952,7 +1043,7 @@ export default function Chat() {
 
                         {/* Stats Grid */}
                         <div className="grid grid-cols-2 gap-4">
-                          <div className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-3xl p-5 flex flex-col justify-between hover:bg-white/5 transition-all">
+                          <div className="bg-card backdrop-blur-xl border border-border rounded-3xl p-5 flex flex-col justify-between hover:bg-primary/5 transition-all">
                             <div className="flex items-center justify-between">
                               <div className="w-8 h-8 bg-red-500/10 rounded-lg flex items-center justify-center">
                                 <Clock className="w-4 h-4 text-red-500" />
@@ -965,7 +1056,7 @@ export default function Chat() {
                             </div>
                           </div>
 
-                          <div className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-3xl p-5 flex flex-col justify-between hover:bg-white/5 transition-all">
+                          <div className="bg-card backdrop-blur-xl border border-border rounded-3xl p-5 flex flex-col justify-between hover:bg-primary/5 transition-all">
                             <div className="flex items-center justify-between">
                               <div className="w-8 h-8 bg-amber-500/10 rounded-lg flex items-center justify-center">
                                 <Zap className="w-4 h-4 text-amber-500" />
@@ -978,7 +1069,7 @@ export default function Chat() {
                             </div>
                           </div>
 
-                          <div className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-3xl p-5 flex flex-col justify-between hover:bg-white/5 transition-all">
+                          <div className="bg-card backdrop-blur-xl border border-border rounded-3xl p-5 flex flex-col justify-between hover:bg-primary/5 transition-all">
                             <div className="flex items-center justify-between">
                               <div className="w-8 h-8 bg-emerald-500/10 rounded-lg flex items-center justify-center">
                                 <CheckCircle2 className="w-4 h-4 text-emerald-500" />
@@ -986,12 +1077,12 @@ export default function Chat() {
                               <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Terminé</span>
                             </div>
                             <div className="mt-4">
-                              <div className="text-2xl font-black text-white">{msg.data.done_issues || 0}</div>
+                              <div className="text-2xl font-black text-foreground">{msg.data.done_issues || 0}</div>
                               <div className="text-[10px] text-emerald-400 font-bold uppercase mt-1">Total clos</div>
                             </div>
                           </div>
 
-                          <div className="bg-slate-900/40 backdrop-blur-xl border border-white/5 rounded-3xl p-5 flex flex-col justify-between hover:bg-white/5 transition-all">
+                          <div className="bg-card backdrop-blur-xl border border-border rounded-3xl p-5 flex flex-col justify-between hover:bg-primary/5 transition-all">
                             <div className="flex items-center justify-between">
                               <div className="w-8 h-8 bg-primary/10 rounded-lg flex items-center justify-center">
                                 <BarChart3 className="w-4 h-4 text-primary" />
@@ -999,7 +1090,7 @@ export default function Chat() {
                               <span className="text-[10px] font-black text-slate-500 uppercase tracking-widest">Total</span>
                             </div>
                             <div className="mt-4">
-                              <div className="text-2xl font-black text-white">{msg.data.total_issues || 0}</div>
+                              <div className="text-2xl font-black text-foreground">{msg.data.total_issues || 0}</div>
                               <div className="text-[10px] text-primary font-bold uppercase mt-1">Tâches totales</div>
                             </div>
                           </div>
@@ -1008,16 +1099,16 @@ export default function Chat() {
                     )}
 
                     {msg.display_type === "gantt" && msg.data && msg.data.issues && (
-                      <div className="mt-5 overflow-hidden bg-slate-950/40 rounded-2xl border border-white/5 shadow-2xl">
+                      <div className="mt-5 overflow-hidden bg-card rounded-2xl border border-border shadow-2xl">
                         <div className="p-4 bg-primary/10 border-b border-white/5 flex items-center gap-2">
                           <Calendar className="w-4 h-4 text-primary" />
-                          <h4 className="text-xs font-black uppercase tracking-widest text-white">Chronologie du Projet</h4>
+                          <h4 className="text-xs font-black uppercase tracking-widest text-foreground">Chronologie du Projet</h4>
                         </div>
                         <div className="p-5 space-y-4">
                           {msg.data.issues.slice(0, 10).map((issue: any) => (
                             <div key={issue.id} className="space-y-1.5">
                               <div className="flex justify-between text-[10px]">
-                                <span className="font-bold text-slate-300">#{issue.id} {issue.subject}</span>
+                                <span className="font-bold text-foreground/80">#{issue.id} {issue.subject}</span>
                                 <span className="text-slate-500 font-mono">{issue.start_date || "?"} → {issue.due_date || "?"}</span>
                               </div>
                               <div className="relative h-2 bg-white/5 rounded-full overflow-hidden">
@@ -1039,15 +1130,15 @@ export default function Chat() {
               </div>
             ))}
             {loading && (
-              <div className="flex gap-5 bg-white/[0.03] p-7 rounded-[32px] border border-white/5 animate-pulse">
+              <div className="flex gap-5 bg-card p-7 rounded-[32px] border border-border animate-pulse">
                 <div className="w-10 h-10 bg-primary/20 rounded-xl flex items-center justify-center">
                   <Loader2 className="w-5.5 h-5.5 text-primary animate-spin" />
                 </div>
                 <div className="flex-1 space-y-4">
-                  <div className="h-2.5 bg-white/10 rounded-full w-28"></div>
+                  <div className="h-2.5 bg-muted rounded-full w-28"></div>
                   <div className="space-y-3">
-                    <div className="h-2.5 bg-white/10 rounded-full w-full"></div>
-                    <div className="h-2.5 bg-white/10 rounded-full w-[90%]"></div>
+                    <div className="h-2.5 bg-muted rounded-full w-full"></div>
+                    <div className="h-2.5 bg-muted rounded-full w-[90%]"></div>
                   </div>
                 </div>
               </div>
@@ -1068,7 +1159,7 @@ export default function Chat() {
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
                 placeholder={`Poser une question sur ${projectName}...`}
-                className="w-full h-12 pl-6 pr-16 bg-slate-900/60 backdrop-blur-2xl border-white/10 focus:border-primary/40 text-sm rounded-[20px] shadow-[0_20px_50px_rgba(0,0,0,0.4)] transition-all font-sans placeholder:text-slate-500 focus:ring-0 glow-primary-hover"
+                className="w-full h-12 pl-6 pr-16 bg-card backdrop-blur-2xl border-border focus:border-primary/40 text-sm rounded-[20px] shadow-[0_20px_50px_rgba(0,0,0,0.1)] transition-all font-sans placeholder:text-foreground placeholder:font-black focus:ring-0 glow-primary-hover"
                 disabled={loading}
               />
               <Button

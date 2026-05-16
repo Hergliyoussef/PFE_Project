@@ -51,7 +51,8 @@ CONV_TTL = 7 * 24 * 3600   # 7 jours
 
 def save_message(user_id: str, project_id: str,
                  role: str, content: str,
-                 intent: str = "", agent: str = "") -> bool:
+                 intent: str = "", agent: str = "",
+                 data: dict = None) -> bool:
     """
     Sauvegarde un message dans l'historique Redis.
     Appelé après chaque échange dans le chat.
@@ -64,6 +65,7 @@ def save_message(user_id: str, project_id: str,
             "content":   content,
             "intent":    intent,
             "agent":     agent,
+            "data":      data or {},
             "timestamp": datetime.now().isoformat(),
         }, ensure_ascii=False)
         r.rpush(key, msg)

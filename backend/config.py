@@ -14,11 +14,12 @@ class Settings(BaseSettings):
     groq_api_key: str = ""
 
     # ── Modèles par agent ─────────────────────────────────────
-    llm_supervisor:  str = "llama-3.3-70b-versatile"
-    llm_analyse:     str = "llama-3.3-70b-versatile"
-    llm_planning:    str = "llama-3.3-70b-versatile"
-    llm_rapporteur:  str = "z-ai/glm-4.5-air:free"
-    llm_fallback:    str = "openai/gpt-oss-120b:free"
+    # Déclarés vides par défaut pour forcer leur lecture exclusive depuis le .env
+    llm_supervisor:  str = ""
+    llm_analyse:     str = ""
+    llm_planning:    str = ""
+    llm_rapporteur:  str = ""
+    llm_fallback:    str = ""
 
     # ── Redmine ───────────────────────────────────────────────
     redmine_url:     str = "http://redmine:3000"
@@ -30,10 +31,11 @@ class Settings(BaseSettings):
     redis_password: str = ""
 
     # ── PostgreSQL ────────────────────────────────────────────
-    database_url: str = "postgresql://postgres:pfe_password_2026@db:5432/pm_chatbot"
+    # Valeur par défaut générique (sera écrasée par la valeur de DATABASE_URL dans votre .env)
+    database_url: str = "postgresql://postgres:postgres@localhost:5432/pm_chatbot"
     # ── App ───────────────────────────────────────────────────
-    app_name:   str  = "PM Assistant - Youssef"
-    secret_key: str  = "pmassistant_secret_key_2024"
+    app_name:   str  = "PM Assistant"
+    secret_key: str  = "dev_default_secret_key_change_me_in_env"
     debug:      bool = True
 
     # ── Langfuse ──────────────────────────────────────────────
@@ -42,7 +44,8 @@ class Settings(BaseSettings):
     langfuse_base_url:   str = "https://cloud.langfuse.com"
 
     class Config:
-        env_file          = ".env"
+        from pathlib import Path
+        env_file          = Path(__file__).resolve().parent / ".env"
         env_file_encoding = "utf-8"
         extra             = "ignore"
 

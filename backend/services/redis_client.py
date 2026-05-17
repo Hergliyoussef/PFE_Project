@@ -298,18 +298,37 @@ def get_cached_risk(project_id: str) -> Optional[dict]:
 
 # ══════════════════════════════════════════════════════════════
 # 6. ALERTES PROACTIVES
-# Clé : alerts:{project_id}  — LIST  — TTL 30 min
+# Clé : alerts:{project_id}  — LIST  — TTL 7 jours (Persistant)
 # ══════════════════════════════════════════════════════════════
-ALERTS_TTL = 30 * 60
+ALERTS_TTL = 7 * 24 * 3600  # 7 jours
 
 def push_alert(project_id: str, alert: dict) -> bool:
     """
-    Ajoute une alerte dans la liste Redis.
-    Appelé par monitor.py quand une anomalie est détectée.
+    Ajoute une alerte dans la liste Redis de façon persistante.
+    Évite l'ajout de doublons.
     """
     if not _check(): return False
     try:
         key = f"alerts:{project_id}"
+        import time
+        now_ts = int(time.time())
+        # Générer un ID unique stable s'il n'est pas fourni
+        if "id" not in alert:
+            alert["id"] = f"{project_id}:{alert.get('type', 'alert')}:{alert.get('issue_id', now_ts)}"
+            
+        if "created_at" not in alert:
+            alert["created_at"] = now_ts
+
+        # Éviter les doublons exacts dans la liste Redis
+        existing = r.lrange(key, 0, -1)
+        for item in existing:
+            try:
+                parsed = json.loads(item)
+                if parsed.get("id") == alert["id"]:
+                    return True  # Déjà présente, pas besoin d'ajouter à nouveau
+            except:
+                pass
+                
         r.rpush(key, json.dumps(alert, ensure_ascii=False))
         r.expire(key, ALERTS_TTL)
         return True
@@ -318,17 +337,67 @@ def push_alert(project_id: str, alert: dict) -> bool:
         return False
 
 
-def pop_alerts(project_id: str) -> list[dict]:
+def get_alerts(project_id: str) -> list[dict]:
     """
-    Récupère ET vide les alertes d'un projet.
-    Appelé par Streamlit toutes les 60 secondes.
+    Récupère toutes les alertes actives d'un projet SANS les supprimer.
+    Les alertes sont renvoyées de la plus récente à la plus ancienne.
     """
     if not _check(): return []
     try:
-        key    = f"alerts:{project_id}"
+        key = f"alerts:{project_id}"
         alerts = r.lrange(key, 0, -1)
+        # Inverser pour afficher les plus récentes en premier (new to old)
+        return [json.loads(a) for a in reversed(alerts)]
+    except Exception as e:
+        logger.error(f"[Redis] get_alerts : {e}")
+        return []
+
+
+def delete_alert(project_id: str, alert_id: str) -> bool:
+    """
+    Supprime une alerte spécifique de la liste Redis.
+    """
+    if not _check(): return False
+    try:
+        key = f"alerts:{project_id}"
+        existing = r.lrange(key, 0, -1)
+        for item in existing:
+            try:
+                parsed = json.loads(item)
+                if parsed.get("id") == alert_id:
+                    r.lrem(key, 1, item)
+                    return True
+            except:
+                pass
+        return False
+    except Exception as e:
+        logger.error(f"[Redis] delete_alert : {e}")
+        return False
+
+
+def clear_all_alerts(project_id: str) -> bool:
+    """
+    Supprime toutes les alertes d'un projet.
+    """
+    if not _check(): return False
+    try:
+        key = f"alerts:{project_id}"
         r.delete(key)
-        return [json.loads(a) for a in alerts]
+        return True
+    except Exception as e:
+        logger.error(f"[Redis] clear_all_alerts : {e}")
+        return False
+
+
+def pop_alerts(project_id: str) -> list[dict]:
+    """
+    Compatibilité ascendante : récupère et vide les alertes.
+    """
+    if not _check(): return []
+    try:
+        alerts = get_alerts(project_id)
+        clear_all_alerts(project_id)
+        return alerts
     except Exception as e:
         logger.error(f"[Redis] pop_alerts : {e}")
         return []

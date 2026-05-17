@@ -31,7 +31,7 @@ class ActionParams(BaseModel):
     done_ratio: Optional[int] = Field(default=None, description="Pourcentage d'avancement (0 à 100). Laisse null si non précisé.")
     issue_id: Optional[int] = Field(default=None, description="ID de la tâche à modifier (pour update_issue)")
     status_id: Optional[int] = Field(default=None, description="ID du statut (1=Nouveau, 2=En cours, 3=Résolu, 4=Commentaire, 5=Fermé, 6=Rejeté)")
-    notes: Optional[str] = Field(default=None, description="Commentaire à ajouter sur la tâche (pour update_issue)")
+    notes: Optional[str] = Field(default=None, description="Commentaire à ajouter sur la tâche (pour update_issue, create_issue,etc.)")
 
 
 class SingleAction(BaseModel):
@@ -62,8 +62,8 @@ Tu dois respecter les permissions de l'utilisateur actuel. Son rôle est : {user
 2. PROJECT_MANAGER :
    - Peut créer, modifier ou supprimer des TÂCHES (tickets) uniquement sur son projet.
    - Peut ajouter ou modifier des MEMBRES uniquement sur son projet.
-   - NE PEUT PAS supprimer de projet.
-   - NE PEUT PAS créer ou modifier d'utilisateur global.
+   - NE PEUT jamais supprimer de projet.
+   - NE PEUT jamais créer ou modifier d'utilisateur global.
 Si l'utilisateur demande une action non autorisée pour son rôle, réponds poliment que son rôle ({user_role}) ne lui permet pas de faire cela.
 
 RÈGLE D'AMBIGUÏTÉ :

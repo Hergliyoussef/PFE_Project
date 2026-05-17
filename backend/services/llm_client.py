@@ -36,7 +36,7 @@ def _openrouter(model: str):
 
 
 def _groq(model: str):
-    """Client Groq — 14400 req/jour gratuit."""
+    
     from langchain_openai import ChatOpenAI
     return ChatOpenAI(
         model       = model,

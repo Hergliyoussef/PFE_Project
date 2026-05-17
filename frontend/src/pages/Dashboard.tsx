@@ -9,9 +9,9 @@ import {
   Activity,
   Zap,
   Target,
-  ArrowRight,
   Sparkles,
-  CheckCircle2
+  CheckCircle2,
+  X
 } from "lucide-react"
 import Sidebar from "@/components/layout/Sidebar"
 import {
@@ -173,7 +173,7 @@ export default function Dashboard() {
                 onClick={() => setActiveAlerts(prev => prev.filter((_, i) => i !== idx))}
                 className="text-white/20 hover:text-white transition-colors"
               >
-                <Zap className="w-4 h-4 rotate-45" />
+                <X className="w-4 h-4" />
               </button>
             </div>
           ))}
@@ -208,13 +208,12 @@ export default function Dashboard() {
                   <span className="text-[10px] font-black text-primary uppercase tracking-[0.4em]">Analyse Avancée</span>
                   <Sparkles className="w-3 h-3 text-primary animate-pulse" />
                 </div>
-                <h1 className="text-4xl font-black text-foreground tracking-tighter flex items-center gap-4">
+                <h1 className="text-3xl md:text-4xl font-black text-foreground tracking-tighter whitespace-nowrap">
                   Tableau de Bord
-                  <div className="h-8 w-[2px] bg-border rotate-[20deg] mx-2" />
-                  <span className="bg-gradient-to-r from-primary to-emerald-400 bg-clip-text text-transparent">
-                    {metrics?.project_name || pid || "Chargement..."}
-                  </span>
                 </h1>
+                <div className="text-sm font-bold text-slate-400 flex items-center gap-2 mt-1">
+                  Projet : <span className="bg-gradient-to-r from-primary to-emerald-400 bg-clip-text text-transparent font-black">{metrics?.project_name || pid || "Chargement..."}</span>
+                </div>
               </div>
             </div>
 
@@ -347,7 +346,6 @@ export default function Dashboard() {
                 icon={<Users className="w-10 h-10" />}
                 color="emerald"
                 description="Contributeurs sur ce projet"
-                sparkData={[20, 40, 35, 50, 45, 60, 55]}
                 className="animate-fade-in-up [animation-delay:100ms]"
                 extraContent={
                   <div className="mt-4 space-y-2 max-h-[220px] overflow-y-auto pr-2 custom-scrollbar">
@@ -374,11 +372,25 @@ export default function Dashboard() {
               <CardVisualStats
                 title="Risques & Retards"
                 value={metrics?.delayed_tasks || "0"}
-                icon={<AlertTriangle className="w-10 h-10" />}
-                color="rose"
+                icon={(metrics?.delayed_tasks || 0) > 0 ? <AlertTriangle className="w-10 h-10" /> : <CheckCircle2 className="w-10 h-10" />}
+                color={(metrics?.delayed_tasks || 0) > 0 || (metrics?.risks_count || 0) > 0 ? "rose" : "emerald"}
                 description="Tickets avec échéance dépassée"
-                sparkData={[10, 15, 8, 20, 25, 12, 18]}
                 className="animate-fade-in-up [animation-delay:200ms]"
+                extraContent={
+                  <div className="mt-6 pt-6 border-t border-white/10 flex items-center justify-between">
+                    <div>
+                      <div className="text-3xl font-black text-white">{metrics?.risks_count || "0"}</div>
+                      <div className="text-[10px] text-rose-400 font-bold uppercase tracking-widest mt-1">Blocages Critiques</div>
+                      <div className="text-[8px] text-white/50 font-bold uppercase tracking-tight mt-0.5">Tickets prioritaires actifs</div>
+                    </div>
+                    <div className={`px-3 py-1.5 rounded-xl border text-[9px] font-black uppercase tracking-wider
+                      ${(metrics?.risks_count || 0) > 0 
+                        ? 'bg-rose-500/10 border-rose-500/20 text-rose-400 animate-pulse' 
+                        : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>
+                      {(metrics?.risks_count || 0) > 0 ? 'Alerte' : 'Sain'}
+                    </div>
+                  </div>
+                }
               />
               <CardVisualStats
                 title="Charge Globale"
@@ -388,7 +400,6 @@ export default function Dashboard() {
                 description={metrics?.overload_rate === 0 && metrics?.total_issues > 0
                   ? "Manque de 'temps estimé' sur Redmine"
                   : "Taux de saturation des ressources"}
-                sparkData={metrics?.overload_rate > 0 ? [30, 45, 60, 55, 70, 85, 80] : [5, 5, 5, 5, 5, 5, 5]}
                 className="animate-fade-in-up [animation-delay:300ms]"
               />
               <CardVisualStats
@@ -397,7 +408,6 @@ export default function Dashboard() {
                 icon={<CheckCircle2 className="w-10 h-10" />}
                 color="blue"
                 description="Tickets fermés vs Total tickets"
-                sparkData={metrics?.completion_rate > 0 ? [5, 10, 15, metrics.completion_rate] : [2, 2, 2]}
                 className="animate-fade-in-up [animation-delay:400ms]"
               />
             </div>
@@ -594,117 +604,153 @@ export default function Dashboard() {
           </div>
 
           {/* ── ANALYSE DE L'ÉQUIPE & CHARGE DÉTAILLÉE ── */}
-          <section className="space-y-6">
-            <div className="flex items-center justify-between">
-              <div className="flex items-center gap-3">
-                <div className="p-2 bg-indigo-500/20 rounded-lg text-indigo-400">
-                  <Users className="w-5 h-5" />
+          {(() => {
+            const sortedTeamWorkload = [...(metrics?.team_workload || [])]
+              .map(u => ({
+                ...u,
+                non_urgent: Math.max(0, (u.total || 0) - (u.urgent || 0))
+              }))
+              .sort((a, b) => b.total - a.total);
+            const totalTicketsCount = metrics?.total_issues || sortedTeamWorkload.reduce((sum, u) => sum + (u.total || 0), 0);
+            
+            return (
+              <section className="space-y-6">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-3">
+                    <div className="p-2 bg-indigo-500/20 rounded-lg text-indigo-400">
+                      <Users className="w-5 h-5" />
+                    </div>
+                    <h2 className="text-2xl font-black text-foreground tracking-tight flex flex-wrap items-center gap-3">
+                      Répartition de la Charge
+                      <span className="text-xs px-3 py-1 bg-indigo-500/20 text-indigo-400 border border-indigo-500/30 rounded-full font-black animate-pulse">
+                        {totalTicketsCount} Tickets au Total
+                      </span>
+                    </h2>
+                  </div>
+                  <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-primary pb-1">Analyse par Ressource</div>
                 </div>
-                <h2 className="text-2xl font-black text-foreground tracking-tight">Répartition de la Charge</h2>
-              </div>
-              <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest border-b border-primary pb-1">Analyse par Ressource</div>
-            </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-              {/* Graphique de Charge (BarChart) */}
-              <div className="lg:col-span-2 bg-card border border-border p-8 rounded-[40px] h-[400px]">
-                <ResponsiveContainer width="100%" height="100%">
-                  <BarChart data={metrics?.team_workload || []} margin={{ top: 20, right: 30, left: 20, bottom: 20 }}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.05)" vertical={false} />
-                    <XAxis
-                      dataKey="name"
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: '#FFFFFF', fontSize: 10, fontWeight: 'bold' }}
-                    />
-                    <YAxis
-                      axisLine={false}
-                      tickLine={false}
-                      tick={{ fill: '#FFFFFF', fontSize: 10, fontWeight: 'bold' }}
-                    />
-                    <Tooltip
-                      cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                      contentStyle={{ backgroundColor: "#020617", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px" }}
-                    />
-                    <Legend verticalAlign="top" align="right" />
-                    <Bar name="Tickets Totaux" dataKey="total" stackId="a" fill="#6366f1" radius={[0, 0, 0, 0]} barSize={40} />
-                    <Bar name="Tickets Urgents" dataKey="urgent" stackId="a" fill="#f43f5e" radius={[10, 10, 0, 0]} barSize={40} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </div>
-
-              {/* Rappel Visuel des Membres Surchargés */}
-              <div className="lg:col-span-1 space-y-4">
-                {metrics?.team_workload?.filter((u: any) => u.is_overloaded || u.urgent > 1).map((user: any, i: number) => (
-                  <div key={i} className="p-6 bg-red-500/10 border border-red-500/20 rounded-3xl flex items-center justify-between group hover:bg-red-500/20 transition-all">
-                    <div className="flex items-center gap-4">
-                      <div className="w-12 h-12 rounded-2xl bg-red-500 flex items-center justify-center text-white shadow-lg shadow-red-500/40">
-                        <AlertTriangle className="w-6 h-6" />
-                      </div>
-                      <div>
-                        <div className="text-foreground font-black">{user.name}</div>
-                        <div className="text-[10px] text-red-400 font-bold uppercase tracking-widest">Surcharge Critique</div>
-                      </div>
-                    </div>
-                    <div className="text-2xl font-black text-red-500">+{user.urgent}</div>
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+                  {/* Graphique de Charge (BarChart) */}
+                  <div className="lg:col-span-2 bg-card border border-border p-8 rounded-[40px] h-[400px] flex flex-col">
+                    <div className="w-full flex-1 overflow-x-auto scrollbar-thin">
+                      <ResponsiveContainer width="100%" height="100%" minWidth={500}>
+                        <BarChart data={sortedTeamWorkload} margin={{ top: 20, right: 10, left: 10, bottom: 30 }}>
+                          <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" vertical={false} />
+                          <XAxis
+                          dataKey="name"
+                          axisLine={{ stroke: 'rgba(255,255,255,0.2)', strokeWidth: 1 }}
+                          tickLine={false}
+                          tick={{ fill: '#FFFFFF', fontSize: 10, fontWeight: 'bold' }}
+                          tickFormatter={(value) => {
+                            const u = sortedTeamWorkload.find(user => user.name === value);
+                            return u ? `${value} (${u.total})` : value;
+                          }}
+                        />
+                        <YAxis
+                          axisLine={{ stroke: 'rgba(255,255,255,0.2)', strokeWidth: 1 }}
+                          tickLine={false}
+                          tick={{ fill: '#FFFFFF', fontSize: 10, fontWeight: 'bold' }}
+                        />
+                        <Tooltip
+                          cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                          contentStyle={{ backgroundColor: "#020617", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px" }}
+                        />
+                        <Legend verticalAlign="top" align="right" />
+                        <Bar name="Priorité Normale" dataKey="non_urgent" stackId="a" fill="#6366f1" radius={[0, 0, 0, 0]} barSize={40} />
+                        <Bar name="Priorité Urgente" dataKey="urgent" stackId="a" fill="#f43f5e" radius={[10, 10, 0, 0]} barSize={40} />
+                      </BarChart>
+                    </ResponsiveContainer>
                   </div>
-                ))}
-                {(!metrics?.team_workload?.some((u: any) => u.is_overloaded)) && (
-                  <div className="h-full flex flex-col items-center justify-center p-8 bg-emerald-500/5 border border-emerald-500/10 border-dashed rounded-[40px] text-center space-y-4">
-                    <div className="p-4 bg-emerald-500/20 rounded-full text-emerald-400">
-                      <CheckCircle2 className="w-10 h-10" />
-                    </div>
-                    <p className="text-sm text-slate-400 font-medium">Charge d'équipe équilibrée.<br />Aucun goulot d'étranglement.</p>
-                  </div>
-                )}
-              </div>
-            </div>
+                </div>
 
-            {/* ── TOP CONTRIBUTEURS (BONUS) ── */}
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-10">
-              <div className="md:col-span-3 flex items-center gap-3 mb-2">
-                <Sparkles className="w-5 h-5 text-yellow-400 animate-pulse" />
-                <h2 className="text-xl font-black text-white uppercase tracking-tighter">Élite du Projet</h2>
-              </div>
-
-              {metrics?.team_workload?.slice(0, 3).map((user: any, i: number) => (
-                <div key={i} className="relative group overflow-hidden p-6 bg-white/5 backdrop-blur-2xl border border-white/10 rounded-[32px] hover:-translate-y-2 transition-all duration-500">
-                  {/* Badge de Rang */}
-                  <div className={`absolute -top-2 -right-2 w-12 h-12 flex items-center justify-center rounded-full shadow-2xl z-10 
-                      ${i === 0 ? 'bg-gradient-to-br from-yellow-300 to-yellow-600' :
-                      i === 1 ? 'bg-gradient-to-br from-slate-300 to-slate-500' :
-                        'bg-gradient-to-br from-orange-400 to-orange-700'}`}>
-                    <span className="text-white font-black text-lg">{i + 1}</span>
-                  </div>
-
-                  <div className="flex items-center gap-4 relative z-10">
-                    <div className="w-16 h-16 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-center text-2xl font-black text-white shadow-inner group-hover:scale-110 transition-transform">
-                      {user.name.charAt(0)}
-                    </div>
-                    <div>
-                      <div className="text-lg font-black text-white">{user.name}</div>
-                      <div className="text-[10px] text-primary font-bold uppercase tracking-widest">
-                        {i === 0 ? 'Leader Performance' : i === 1 ? 'Expert Technique' : 'Soutien Actif'}
-                      </div>
-                    </div>
-                  </div>
-
-                  <div className="mt-6 pt-6 border-t border-white/5 flex justify-between items-end">
-                    <div>
-                      <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Impact Projet</div>
-                      <div className="text-2xl font-black text-white">{Math.round((user.total / (metrics.total_issues || 1)) * 100)}%</div>
-                    </div>
-                    <div className="flex gap-1">
-                      {[1, 2, 3, 4, 5].map((s) => (
-                        <div key={s} className={`w-1.5 h-6 rounded-full ${s <= (5 - i) ? 'bg-primary animate-pulse' : 'bg-white/10'}`}
-                          style={{ animationDelay: `${s * 100}ms` }} />
-                      ))}
+                  {/* Rappel Visuel des Membres Surchargés */}
+                  <div className="lg:col-span-1 h-[400px] flex flex-col">
+                    <div className="space-y-4 flex-1 overflow-y-auto pr-1 scrollbar-thin h-full">
+                      {(() => {
+                        const overloadedMembers = sortedTeamWorkload.filter((u: any) => u.is_overloaded || (u.urgent || 0) > 1);
+                        if (overloadedMembers.length > 0) {
+                          return overloadedMembers.map((user: any, i: number) => (
+                            <div key={i} className="p-6 bg-red-500/10 border border-red-500/20 rounded-3xl flex items-center justify-between group hover:bg-red-500/20 transition-all">
+                              <div className="flex items-center gap-4">
+                                <div className="w-12 h-12 rounded-2xl bg-red-500 flex items-center justify-center text-white shadow-lg shadow-red-500/40">
+                                  <AlertTriangle className="w-6 h-6" />
+                                </div>
+                                <div>
+                                  <div className="text-foreground font-black">{user.name} <span className="text-sm font-bold text-slate-400">({user.total})</span></div>
+                                  <div className="text-[10px] text-red-400 font-bold uppercase tracking-widest">Surcharge Critique</div>
+                                </div>
+                              </div>
+                              <div className="text-2xl font-black text-red-500">+{user.urgent}</div>
+                            </div>
+                          ));
+                        }
+                        return (
+                          <div className="h-full flex flex-col items-center justify-center p-8 bg-emerald-500/5 border border-emerald-500/10 border-dashed rounded-[40px] text-center space-y-4">
+                            <div className="p-4 bg-emerald-500/20 rounded-full text-emerald-400">
+                              <CheckCircle2 className="w-10 h-10" />
+                            </div>
+                            <p className="text-sm text-slate-400 font-medium">Charge d'équipe équilibrée.<br />Aucun goulot d'étranglement.</p>
+                          </div>
+                        );
+                      })()}
                     </div>
                   </div>
                 </div>
-              ))}
-            </div>
-          </section>
+
+                                {/* ── TOP CONTRIBUTEURS (BONUS) ── */}
+                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 pt-10">
+                  <div className="md:col-span-2 lg:col-span-4 flex items-center gap-3 mb-2">
+                    <Sparkles className="w-5 h-5 text-yellow-400 animate-pulse" />
+                    <h2 className="text-xl font-black text-white uppercase tracking-tighter">Élite du Projet</h2>
+                  </div>
+
+                  {sortedTeamWorkload.slice(0, 4).map((user: any, i: number) => (
+                    <div key={i} className="relative group overflow-hidden p-6 bg-white/5 backdrop-blur-2xl border border-white/10 rounded-[32px] hover:-translate-y-2 transition-all duration-500">
+                      {/* Badge de Rang */}
+                      <div className={`absolute -top-2 -right-2 w-12 h-12 flex items-center justify-center rounded-full shadow-2xl z-10 
+                          ${i === 0 ? 'bg-gradient-to-br from-yellow-300 to-yellow-600' :
+                          i === 1 ? 'bg-gradient-to-br from-slate-300 to-slate-500' :
+                          i === 2 ? 'bg-gradient-to-br from-orange-400 to-orange-700' :
+                            'bg-gradient-to-br from-teal-400 to-emerald-600'}`}>
+                        <span className="text-white font-black text-lg">{i + 1}</span>
+                      </div>
+
+                      <div className="flex items-center gap-4 relative z-10">
+                        <div className="w-16 h-16 rounded-2xl bg-white/10 border border-white/10 flex items-center justify-center text-2xl font-black text-white shadow-inner group-hover:scale-110 transition-transform">
+                          {user.name.charAt(0)}
+                        </div>
+                        <div>
+                          <div className="text-lg font-black text-white">{user.name} <span className="text-sm font-bold text-slate-400">({user.total})</span></div>
+                          <div className="text-[10px] text-primary font-bold uppercase tracking-widest">
+                            {user.role || (
+                              i === 0 ? 'Leader Performance' : 
+                              i === 1 ? 'Expert Technique' : 
+                              i === 2 ? 'Soutien Actif' : 
+                              'Collaborateur Clé'
+                            )}
+                          </div>
+                        </div>
+                      </div>
+
+                      <div className="mt-6 pt-6 border-t border-white/5 flex justify-between items-end">
+                        <div>
+                          <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Impact Projet</div>
+                          <div className="text-2xl font-black text-white">{Math.round((user.total / (metrics.total_issues || 1)) * 100)}%</div>
+                        </div>
+                        <div className="flex gap-1">
+                          {[1, 2, 3, 4, 5].map((s) => (
+                            <div key={s} className={`w-1.5 h-6 rounded-full ${s <= (5 - i) ? 'bg-primary animate-pulse' : 'bg-white/10'}`}
+                              style={{ animationDelay: `${s * 100}ms` }} />
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </section>
+            );
+          })()}
 
           {/* ── LISTE DES TÂCHES CRITIQUES ── */}
 
@@ -833,7 +879,7 @@ export default function Dashboard() {
   )
 }
 
-function CardVisualStats({ title, value, icon, color, description, sparkData, extraContent, className }: any) {
+function CardVisualStats({ title, value, icon, color, description, extraContent, className }: any) {
   const colorStyles: any = {
     primary: "from-primary/50 to-primary/20 text-white border-primary/40",
     emerald: "from-emerald-600/50 to-emerald-600/20 text-white border-emerald-500/40",
@@ -842,18 +888,8 @@ function CardVisualStats({ title, value, icon, color, description, sparkData, ex
     yellow: "from-amber-500/50 to-amber-500/20 text-white border-amber-500/40",
   }
 
-  const chartColor = color === 'primary' ? '#9ACD32' : color === 'emerald' ? '#10b981' : color === 'rose' ? '#f43f5e' : color === 'yellow' ? '#f59e0b' : '#3b82f6';
-
   return (
     <div className={`bg-gradient-to-br ${colorStyles[color]} backdrop-blur-2xl border p-8 rounded-[40px] space-y-6 hover:-translate-y-2 transition-all duration-500 group relative overflow-hidden shadow-2xl ${className}`}>
-      <div className="absolute inset-0 opacity-[0.03] pointer-events-none">
-        <ResponsiveContainer width="100%" height="100%">
-          <AreaChart data={sparkData?.map((v: any, i: any) => ({ v, i })) || []}>
-            <Area type="monotone" dataKey="v" stroke={chartColor} fill={chartColor} strokeWidth={0} />
-          </AreaChart>
-        </ResponsiveContainer>
-      </div>
-
       <div className="flex items-start justify-between relative z-10">
         <div className="p-4 bg-white/10 rounded-2xl border border-white/10 shadow-inner group-hover:bg-white/20 transition-all">
           {React.cloneElement(icon as React.ReactElement<any>, { className: "w-8 h-8", strokeWidth: 2.5 })}
@@ -882,15 +918,6 @@ function CardVisualStats({ title, value, icon, color, description, sparkData, ex
             {extraContent}
           </div>
         )}
-      </div>
-
-      {/* Mini Sparkline at the bottom */}
-      <div className="h-10 w-full mt-4 opacity-40 group-hover:opacity-100 transition-opacity">
-        <ResponsiveContainer width="100%" height="100%" minWidth={0}>
-          <AreaChart data={sparkData?.map((v: any, i: any) => ({ v, i })) || []}>
-            <Area type="monotone" dataKey="v" stroke={chartColor} strokeWidth={3} fill="transparent" />
-          </AreaChart>
-        </ResponsiveContainer>
       </div>
     </div>
   )

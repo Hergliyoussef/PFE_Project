@@ -1,4 +1,4 @@
-from fastapi import APIRouter, HTTPException, Depends
+from fastapi import APIRouter, HTTPException, Depends, BackgroundTasks
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from typing import Optional, List
@@ -15,7 +15,7 @@ from services.redmine_client import redmine, redmine_api_key_ctx, redmine_user_l
 from services.redis_client import (
     save_message, get_history,
     get_cached_metrics, cache_metrics,
-    pop_alerts,
+    pop_alerts, get_alerts, delete_alert, clear_all_alerts,
 )
 
 logger = logging.getLogger(__name__)
@@ -140,12 +140,19 @@ async def chat_stream(
 
     redmine_user_login_ctx.set(current_user.get("sub"))
     user_id_str = current_user.get("sub")
+    user_id_int = current_user.get("user_id", 1)
     
     # Rôle
     user_roles = current_user.get("roles", [])
     primary_role = "PROJECT_MANAGER"
     if "CEO" in user_roles or current_user.get("is_admin"):
         primary_role = "CEO"
+
+    # Gestion de l'ID conversation (Multi-session)
+    conv_id = req.conversation_id
+    safe_proj_id = str(req.project_id) if req.project_id and str(req.project_id) != "None" else "inconnu"
+    if not conv_id:
+        conv_id = f"conv_{user_id_int}_{safe_proj_id}_{uuid.uuid4().hex[:8]}"
 
     from agents.supervisor_agent import run_agent_stream
     return StreamingResponse(
@@ -155,7 +162,8 @@ async def chat_stream(
             project_name=req.project_name or "",
             user_id=user_id_str,
             user_role=primary_role,
-            history=req.history or []
+            history=req.history or [],
+            conversation_id=conv_id
         ),
         media_type="text/event-stream"
     )
@@ -450,20 +458,86 @@ def _get_display_data(display_type: str, project_id: str) -> dict:
 # ── ROUTES DE MONITORING ──────────────────────────────────────
 
 @router.get("/alerts/{project_id}")
-async def get_alerts(
+async def get_alerts_endpoint(
     project_id: str,
     current_user: dict = Depends(require_authorized_role)
 ):
     try:
-        alerts = pop_alerts(project_id) or []
-        return {"alerts": alerts}
+        # redmine.get_projects() retourne uniquement les projets autorisés pour l'utilisateur connecté !
+        projects = redmine.get_projects()
+        p_name_map = {p.get("identifier"): p.get("name") for p in projects if p.get("identifier")}
+        
+        all_alerts = []
+        for p_id, p_name in p_name_map.items():
+            alerts = get_alerts(p_id)
+            for a in alerts:
+                if not a.get("project_name"):
+                    a["project_name"] = p_name
+                if not a.get("project_id"):
+                    a["project_id"] = p_id
+            all_alerts.extend(alerts)
+            
+        # Trier du plus récent au plus ancien globalement
+        all_alerts.sort(key=lambda x: x.get("created_at", 0), reverse=True)
+        return {"alerts": all_alerts}
     except Exception as e:
         logger.error(f"[Alerts] Erreur : {e}")
-        return {"alerts": []}
+        try:
+            alerts = get_alerts(project_id)
+            return {"alerts": alerts}
+        except:
+            return {"alerts": []}
+
+
+@router.delete("/alerts/{project_id}/{alert_id}")
+async def delete_single_alert(
+    project_id: str,
+    alert_id: str,
+    current_user: dict = Depends(require_authorized_role)
+):
+    try:
+        success = delete_alert(project_id, alert_id)
+        if not success:
+            # Fallback : chercher dans tous les projets si l'utilisateur est CEO
+            is_ceo = any("CEO" in r.upper() for r in current_user.get("roles", [])) or "CEO" in current_user.get("role", "").upper() or current_user.get("is_admin", False)
+            if is_ceo:
+                projects = redmine.get_projects()
+                for p in projects:
+                    p_id = p.get("identifier")
+                    if p_id and p_id != project_id:
+                        if delete_alert(p_id, alert_id):
+                            success = True
+                            break
+        return {"success": success}
+    except Exception as e:
+        logger.error(f"[Alerts] Erreur suppression : {e}")
+        return {"success": False}
+
+
+@router.delete("/alerts/{project_id}")
+async def clear_all_project_alerts(
+    project_id: str,
+    current_user: dict = Depends(require_authorized_role)
+):
+    try:
+        is_ceo = any("CEO" in r.upper() for r in current_user.get("roles", [])) or "CEO" in current_user.get("role", "").upper() or current_user.get("is_admin", False)
+        if is_ceo:
+            projects = redmine.get_projects()
+            for p in projects:
+                p_id = p.get("identifier")
+                if p_id:
+                    clear_all_alerts(p_id)
+        else:
+            clear_all_alerts(project_id)
+        return {"success": True}
+    except Exception as e:
+        logger.error(f"[Alerts] Erreur nettoyage : {e}")
+        return {"success": False}
 
 @router.get("/projects/{project_id}/metrics")
 async def get_project_metrics(
     project_id: str,
+    background_tasks: BackgroundTasks,
     current_user: dict = Depends(require_authorized_role)
 ):
     # Vérification de la permission par projet
@@ -472,6 +546,10 @@ async def get_project_metrics(
         raise HTTPException(status_code=403, detail="Accès Dashboard refusé. Rôle de gestionnaire requis sur ce projet.")
 
     redmine_user_login_ctx.set(current_user.get("sub"))
+
+    # Lancer une vérification proactive d'alerte en arrière-plan (ultra-rapide, temps réel sous 5s)
+    from services.monitor import check_project
+    background_tasks.add_task(check_project, project_id)
 
     try:
         # On récupère les métriques complètes de Redmine

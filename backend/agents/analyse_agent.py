@@ -1,6 +1,6 @@
 """
 Agent Analyse — backend/agents/analyse_agent.py
-100% LangChain — Pure LCEL + Manual Tool Loop (No LangGraph).
+LangChain — Pure LCEL + Manual Tool Loop .
 """
 import logging
 from langchain_core.messages import AIMessage, ToolMessage, SystemMessage, HumanMessage
@@ -24,8 +24,6 @@ RÈGLES CRITIQUES D'INTÉGRITÉ :
 
 CONSIGNES :
 1. Utilise TOUJOURS project_id="{project_id}" dans tes appels d'outils.
-2. Si l'utilisateur est CEO : Priorise les vues d'ensemble, les budgets et les risques stratégiques.
-3. Si l'utilisateur est PROJECT_MANAGER : Sois précis, cite les numéros de tickets et la charge de travail.
 
 Outils disponibles :
 - get_project_metrics     → avancement global, retards
@@ -51,7 +49,6 @@ FALLBACK = {
 def analyse_node(state: AgentState) -> dict:
     """
     Node LangChain pour l'analyse de données Redmine.
-    Exécution manuelle des outils pour éviter la dépendance à LangGraph.
     """
     project_id = state.get("project_id", "default")
     user_role  = state.get("user_role", "PROJECT_MANAGER")

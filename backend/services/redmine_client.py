@@ -911,6 +911,18 @@ class RedmineClient:
                 user_load[assignee]["urgent"] += 1
                 total_urgent_project += 1
 
+        # Résoudre les rôles de chaque membre depuis Redmine pour le tableau de bord
+        member_roles = {}
+        try:
+            raw_members = self.get_project_members(project_id)
+            for m in raw_members:
+                m_name = m.get("user", {}).get("name", "")
+                m_roles = [r.get("name") for r in m.get("roles", [])]
+                if m_name:
+                    member_roles[m_name] = ", ".join(m_roles) if m_roles else "Développeur"
+        except Exception as e:
+            logger.error(f"[Metrics] Erreur récupération membres pour rôles : {e}")
+
         team_workload = []
         bottleneck_user = None
         max_urgent_share = 0
@@ -922,12 +934,16 @@ class RedmineClient:
                 "total": stats["total"],
                 "urgent": stats["urgent"],
                 "share": round(urgent_share, 1),
-                "is_overloaded": stats["urgent"] >= 3 or stats["total"] >= 10
+                "is_overloaded": stats["urgent"] >= 3 or stats["total"] >= 10,
+                "role": member_roles.get(name, "Chef de Projet" if name == "Superviseur" else ("Non Assigné" if name == "Non assigné" else "Développeur"))
             })
             
             if urgent_share > max_urgent_share:
                 max_urgent_share = urgent_share
                 bottleneck_user = name
+
+        # Toujours trier la charge d'équipe de la plus élevée à la moins élevée
+        team_workload.sort(key=lambda x: x["total"], reverse=True)
 
         bottleneck_alert = None
         if max_urgent_share > 50 and bottleneck_user != "Non assigné" and total_urgent_project > 3:

@@ -27,12 +27,21 @@ class ConnectionManager:
         await websocket.send_json(message)
 
     async def broadcast_to_project(self, project_id: str, message: dict):
-        """Envoie un message à tous les utilisateurs connectés à ce projet."""
+        """Envoie un message à tous les utilisateurs connectés à ce projet et au canal global."""
+        # 1. Envoyer aux abonnés du projet spécifique
         if project_id in self.active_connections:
             for connection in self.active_connections[project_id]:
                 try:
                     await connection.send_json(message)
                 except Exception as e:
-                    logger.error(f"[WS] Erreur broadcast : {e}")
+                    logger.error(f"[WS] Erreur broadcast {project_id} : {e}")
+
+        # 2. Envoyer aussi aux abonnés globaux ("all_projects")
+        if "all_projects" in self.active_connections:
+            for connection in self.active_connections["all_projects"]:
+                try:
+                    await connection.send_json(message)
+                except Exception as e:
+                    logger.error(f"[WS] Erreur broadcast global : {e}")
 
 manager = ConnectionManager()

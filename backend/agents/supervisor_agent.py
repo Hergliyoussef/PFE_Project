@@ -21,7 +21,7 @@ REFUSAL_MSG = "Je suis un assistant spécialisé uniquement dans la gestion de p
 class RouterDecision(BaseModel):
     """Décision du superviseur sur l'agent à appeler."""
     action: Literal["analyse", "rapporteur", "planning", "hors_sujet"] = Field(description="L'agent spécialisé ou hors_sujet.")
-    intent: str = Field(description="L'intention détectée.")
+    intent: str = Field(default="general", description="L'intention détectée.")
     message: str = Field(default="", description="Réponse directe si hors_sujet.")
 
 parser = PydanticOutputParser(pydantic_object=RouterDecision)
@@ -31,8 +31,7 @@ SYSTEM_PROMPT = """Tu es le cerveau d'un chatbot de gestion de projet. Tu dois d
 RÈGLES :
 1. Si l'utilisateur demande des chiffres, métriques, membres ou l'état du projet -> action="analyse"
 2. Si l'utilisateur demande de créer, modifier ou supprimer quelque chose -> action="planning"
-3. Si l'utilisateur demande un rapport ou une synthèse -> action="rapporteur"
-4. Pour le reste (Bonjour, Merci, formatage, questions sur le dernier message) -> action="hors_sujet"
+3. Si l'utilisateur demande un rapport, une synthèse ou un résumé -> action="rapporteur"
 
 IMPORTANT : Réponds TOUJOURS au format JSON suivant :
 {{
@@ -91,15 +90,38 @@ def _get_decision(question: str, history: list) -> RouterDecision:
                 clean_content = "{" + clean_content.split("{", 1)[1].rsplit("}", 1)[0] + "}"
                 
             data = json.loads(clean_content)
+            
+            # Injection automatique des champs optionnels manquants pour éviter les erreurs de validation
+            if "intent" not in data:
+                data["intent"] = "general"
+            if "action" not in data or data["action"] not in ["analyse", "rapporteur", "planning", "hors_sujet"]:
+                data["action"] = "hors_sujet"
+            if "message" not in data:
+                data["message"] = ""
+                
             return RouterDecision(**data)
-        except Exception:
+        except Exception as parse_err:
+            logger.warning(f"[Router] Échec parsing JSON initial : {parse_err}. Tentative de récupération par expressions régulières...")
+            
+            # Essayer d'extraire le message par regex si la réponse contient du JSON
+            import re
+            msg_match = re.search(r'"message"\s*:\s*"([^"]+)"', content)
+            if msg_match:
+                extracted_msg = msg_match.group(1)
+                try:
+                    # Décoder les échappements unicode si présents
+                    extracted_msg = bytes(extracted_msg, "utf-8").decode("unicode_escape")
+                except Exception:
+                    pass
+                return RouterDecision(action="hors_sujet", intent="general", message=extracted_msg)
+            
             # Si le parsing échoue mais que le message a l'air d'une salutation ou d'une réponse textuelle, on le garde
             # Sinon, si c'est un refus connu ou un bug, on utilise le REFUSAL_MSG
             if "assistant spécialisé" in content or "pas répondre" in content:
                 return RouterDecision(action="hors_sujet", intent="off_topic", message=REFUSAL_MSG)
             
-            # Cas par défaut : on fait confiance au texte de l'IA s'il n'est pas trop long
-            if len(content) < 200:
+            # Cas par défaut : on fait confiance au texte de l'IA s'il n'est pas trop long ET ne ressemble pas à du JSON
+            if len(content) < 200 and "{" not in content and "action" not in content:
                 return RouterDecision(action="hors_sujet", intent="general", message=content)
             
             return RouterDecision(action="hors_sujet", intent="off_topic", message=REFUSAL_MSG)
@@ -135,7 +157,7 @@ master_chain = (
     | RunnableLambda(_execute_routing)
 )
 
-async def run_agent_stream(question: str, project_id: str, user_id: str, user_role: str = "PROJECT_MANAGER", history: list = None, project_name: str = ""):
+async def run_agent_stream(question: str, project_id: str, user_id: str, user_role: str = "PROJECT_MANAGER", history: list = None, project_name: str = "", conversation_id: str = None):
     """Version asynchrone qui streame la réponse finale."""
     converted_history = convert_history_to_messages(history)
     
@@ -174,15 +196,62 @@ async def run_agent_stream(question: str, project_id: str, user_id: str, user_ro
 
         words = display_text.split(" ")
         for i, word in enumerate(words):
-            yield f"data: {json.dumps({'token': word + (' ' if i < len(words)-1 else ''), 'intent': final_intent, 'agent': decision.action, 'data': final_data})}\n\n"
+            yield f"data: {json.dumps({'token': word + (' ' if i < len(words)-1 else ''), 'intent': final_intent, 'agent': decision.action, 'data': final_data, 'conversation_id': conversation_id})}\n\n"
             import asyncio
             await asyncio.sleep(0.01) # Un peu plus rapide
 
-        # 3. Sauvegarde (Redis + Postgres)
+        # 3. Sauvegarde hybride (Redis + Postgres)
         from services.redis_client import save_message
-        save_message(user_id, f"{project_id}:stream", "user", question)
-        # Pour le planning, on sauve le résumé ou l'answer propre
-        save_message(user_id, f"{project_id}:stream", "assistant", display_text, intent=final_intent, data=final_data)
+        
+        redis_key = f"{project_id}:{conversation_id}"
+        save_message(user_id, redis_key, "user", question)
+        save_message(user_id, redis_key, "assistant", display_text, intent=final_intent, data=final_data)
+        
+        # Sauvegarde Postgres
+        try:
+            from db.session import SessionLocal
+            from db.models import Message as DBMessage, Conversation as DBConv
+            from datetime import datetime
+            
+            db = SessionLocal()
+            try:
+                # 1. Vérifier ou créer la conversation
+                db_conv = db.query(DBConv).filter(DBConv.id == conversation_id).first()
+                if not db_conv:
+                    db_conv = DBConv(
+                        id=conversation_id,
+                        username=user_id,
+                        role_user=user_role,
+                        title=f"Chat {project_id} - {datetime.now().strftime('%d/%m %H:%M')}",
+                        project_name=project_name or project_id
+                    )
+                    db.add(db_conv)
+                    db.flush()
+                
+                # 2. Ajouter les messages
+                msg_user = DBMessage(
+                    conversation_id=conversation_id,
+                    name_user=user_id,
+                    role=user_role,
+                    content=question
+                )
+                msg_ai = DBMessage(
+                    conversation_id=conversation_id,
+                    name_user=None,
+                    role="assistant",
+                    content=display_text
+                )
+                db.add(msg_user)
+                db.add(msg_ai)
+                db.commit()
+                logger.info(f"[Postgres Stream] Discussion et messages sauvegardés avec succès pour {conversation_id}")
+            except Exception as inner_db_err:
+                db.rollback()
+                logger.error(f"[Postgres Stream] Erreur transaction : {inner_db_err}")
+            finally:
+                db.close()
+        except Exception as db_err:
+            logger.error(f"[Postgres Stream] Erreur de session ou de connexion : {db_err}")
         
         yield "data: [DONE]\n\n"
 

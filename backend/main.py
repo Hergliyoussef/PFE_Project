@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
     stop_monitor()
 app = FastAPI(
     title       = "PM Assistant API",
-    description = "Chatbot IA pour chefs de projet — Redmine",
+    description = "hatbot IA d'Assistance à la Gestion de Projet — Redmine",
     version     = "1.0.0",
     lifespan    = lifespan,
 )

@@ -1,9 +1,9 @@
-import { useState, useEffect, useRef } from "react"
+import { useState, useEffect, useRef, useMemo } from "react"
 import Sidebar from "@/components/layout/Sidebar"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
-import { Send, Loader2, Bot, User as UserIcon, CheckCircle2, XCircle, AlertTriangle, Clock, Calendar, Shield, BarChart3, Trophy, Target, Zap, Trash2 } from "lucide-react"
+import { Send, Loader2, Bot, User as UserIcon, CheckCircle2, XCircle, AlertTriangle, Clock, Calendar, Shield, BarChart3, Trophy, Target, Zap, Trash2, X, Activity, Bell } from "lucide-react"
 import api from "@/api/api"
 import Cookies from "js-cookie"
 import ReactMarkdown from "react-markdown"
@@ -28,31 +28,107 @@ export default function Chat() {
   const scrollRef = useRef<HTMLDivElement>(null)
   const [projectName, setProjectName] = useState("Projet")
   const [activeAlerts, setActiveAlerts] = useState<any[]>([])
+  const [popupAlerts, setPopupAlerts] = useState<any[]>([])
+  const [showNotifications, setShowNotifications] = useState(false)
+  const [activePid, setActivePid] = useState<string>(() => {
+    return localStorage.getItem("pm_active_project") || ""
+  })
+
+  // Détection si l'utilisateur est un CEO pour écouter toutes les alertes globales
+  const isUserCeo = useMemo(() => {
+    const userData = localStorage.getItem("pm_user");
+    if (!userData) return false;
+    try {
+      const u = JSON.parse(userData);
+      return u.roles?.some((r: string) => r.toUpperCase().includes("CEO")) || u.role?.toUpperCase().includes("CEO") || u.is_admin;
+    } catch {
+      return false;
+    }
+  }, []);
+
+  const authorizedProjectIds = useMemo(() => {
+    const userDataStr = localStorage.getItem("pm_user");
+    if (!userDataStr) return [];
+    try {
+      const user = JSON.parse(userDataStr);
+      return user.authorized_projects?.map((p: any) => p.identifier) || [];
+    } catch {
+      return [];
+    }
+  }, []);
+
+  const displayedAlerts = useMemo(() => {
+    if (isUserCeo) return activeAlerts;
+    return activeAlerts.filter(a => authorizedProjectIds.includes(a.project_id));
+  }, [activeAlerts, authorizedProjectIds, isUserCeo]);
+
+  const displayedPopupAlerts = useMemo(() => {
+    if (isUserCeo) return popupAlerts;
+    return popupAlerts.filter(a => authorizedProjectIds.includes(a.project_id));
+  }, [popupAlerts, authorizedProjectIds, isUserCeo]);
 
   // --- WebSocket pour Temps Réel ---
   useEffect(() => {
-    const pid = localStorage.getItem("pm_active_project");
+    const pid = activePid || localStorage.getItem("pm_active_project");
     if (!pid) return;
 
+    // Tout le monde écoute le canal global "all_projects" pour le multi-projet en temps réel
+    // Le filtrage sécurisé est géré côté front-end via les projets autorisés.
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.hostname}:8000/ws/dashboard/${pid}`;
+    const wsUrl = `${wsProtocol}//${window.location.hostname}:8000/ws/dashboard/all_projects`;
     const socket = new WebSocket(wsUrl);
 
     socket.onmessage = (event) => {
       try {
         const data = JSON.parse(event.data);
         if (data?.type === "new_alert") {
-          const alertId = Date.now() + Math.random();
+          const alertId = data.alert.id || (Date.now() + Math.random().toString());
           const newAlert = { ...data.alert, id: alertId };
           setActiveAlerts(prev => [newAlert, ...prev]);
+          setPopupAlerts(prev => [newAlert, ...prev]);
           setTimeout(() => {
-            setActiveAlerts(prev => prev.filter(a => a.id !== alertId));
+            setPopupAlerts(prev => prev.filter(a => a.id !== alertId));
           }, 7000);
         }
       } catch {}
     };
     return () => socket.close();
-  }, []);
+  }, [activePid, isUserCeo]);
+
+  const fetchAlerts = async () => {
+    const activeProject = localStorage.getItem("pm_active_project")
+    if (!activeProject) return
+    try {
+      const res = await api.get(`/alerts/${activeProject}`)
+      setActiveAlerts(res.data.alerts || [])
+    } catch (e) {
+      console.error("Erreur lors de la récupération des alertes", e)
+    }
+  }
+
+  const handleDismissAlert = async (alertId: string) => {
+    const activeProject = localStorage.getItem("pm_active_project")
+    if (!activeProject) return
+    try {
+      await api.delete(`/alerts/${activeProject}/${alertId}`)
+      setActiveAlerts(prev => prev.filter(a => a.id !== alertId))
+    } catch (e) {
+      console.error("Erreur lors de la suppression de l'alerte", e)
+      setActiveAlerts(prev => prev.filter(a => a.id !== alertId))
+    }
+  }
+
+  const handleClearAllAlerts = async () => {
+    const activeProject = localStorage.getItem("pm_active_project")
+    if (!activeProject) return
+    try {
+      await api.delete(`/alerts/${activeProject}`)
+      setActiveAlerts([])
+    } catch (e) {
+      console.error("Erreur lors de la suppression de toutes les alertes", e)
+      setActiveAlerts([])
+    }
+  }
 
   useEffect(() => {
     const userData = localStorage.getItem("pm_user")
@@ -66,6 +142,7 @@ export default function Chat() {
         handleSelectConv(activeConvId)
       }
     }
+    fetchAlerts()
   }, [])
 
   useEffect(() => {
@@ -132,6 +209,12 @@ export default function Chat() {
 
             try {
               const parsed = JSON.parse(dataStr);
+              
+              if (parsed.conversation_id && !activeConvId) {
+                setActiveConvId(parsed.conversation_id);
+                localStorage.setItem("pm_last_conv_id", parsed.conversation_id);
+              }
+
               if (parsed.token) {
                 fullContent += parsed.token;
                 // Mise à jour du DERNIER message (celui qu'on vient d'ajouter)
@@ -218,6 +301,7 @@ export default function Chat() {
 
   const handleProjectChange = (projectId: string) => {
     handleNewChat()
+    setActivePid(projectId)
 
     // Update project name from local storage (Sidebar already updated it)
     const userDataStr = localStorage.getItem("pm_user")
@@ -227,8 +311,11 @@ export default function Chat() {
       if (proj) setProjectName(proj.name)
     }
 
-    // Refresh alerts for new project
-    fetchAlerts()
+    // Clear alerts for new project and fetch new ones
+    setActiveAlerts([])
+    setTimeout(() => {
+      fetchAlerts()
+    }, 100)
   }
 
   const handleTaskExecution = async (actions: any[], msgIndex: number, accept: boolean) => {
@@ -274,7 +361,7 @@ export default function Chat() {
   }
 
   return (
-    <div className="flex h-screen bg-background text-foreground overflow-hidden font-sans">
+    <div className="flex h-screen bg-background text-foreground overflow-hidden font-sans relative">
       <Sidebar
         activeConvId={activeConvId}
         onSelectConv={handleSelectConv}
@@ -282,55 +369,154 @@ export default function Chat() {
         onProjectChange={handleProjectChange}
       />
 
-      <main className="flex-1 flex flex-col relative bg-[radial-gradient(circle_at_50%_50%,rgba(99,102,241,0.02),transparent)]">
-        {/* Alert Notifications Overlay */}
-        <div className="fixed top-20 right-8 z-[101] flex flex-col gap-4 max-w-md">
-          {activeAlerts.map((alert) => (
-            <div 
-              key={alert.id} 
-              className={`p-4 rounded-2xl border shadow-2xl backdrop-blur-2xl animate-fade-in-right flex items-start gap-4 
-                ${alert.level === 'critique' ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}
-            >
-              <div className={`p-2 rounded-lg ${alert.level === 'critique' ? 'bg-red-500/20' : 'bg-amber-500/20'}`}>
-                <AlertTriangle className="w-5 h-5" />
-              </div>
-              <div className="flex-1 space-y-1">
-                <div className="text-[10px] font-black uppercase tracking-widest opacity-70">Alerte IA {alert.type}</div>
-                <p className="text-xs font-bold leading-relaxed text-white">{alert.message}</p>
-              </div>
-              <button 
-                onClick={() => setActiveAlerts(prev => prev.filter(a => a.id !== alert.id))}
-                className="text-white/20 hover:text-white transition-colors"
-              >
-                <Zap className="w-4 h-4 rotate-45" />
-              </button>
+      {/* Temporary Alert Popups (Toasts) - Placed at root level to ensure they stay at the top-right exactly like the Dashboard! */}
+      <div className="fixed top-24 right-8 z-[150] flex flex-col gap-4 max-w-md pointer-events-auto">
+        {displayedPopupAlerts.map((alert) => (
+          <div 
+            key={alert.id} 
+            className={`p-4 rounded-2xl border shadow-2xl backdrop-blur-2xl animate-fade-in-right flex items-start gap-4 
+              ${alert.level === 'critique' ? 'bg-red-500/10 border-red-500/20 text-red-400' : 'bg-amber-500/10 border-amber-500/20 text-amber-400'}`}
+          >
+            <div className={`p-2 rounded-lg ${alert.level === 'critique' ? 'bg-red-500/20' : 'bg-amber-500/20'}`}>
+              <AlertTriangle className="w-5 h-5" />
             </div>
-          ))}
-        </div>
+            <div className="flex-1 space-y-1">
+              <div className="flex flex-wrap items-center gap-1.5">
+                <span className="text-[10px] font-black uppercase tracking-widest opacity-70">Alerte IA {alert.type}</span>
+                {alert.project_name && (
+                  <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-slate-800 text-emerald-400 border border-emerald-500/10">
+                    {alert.project_name}
+                  </span>
+                )}
+              </div>
+              <p className="text-xs font-bold leading-relaxed text-white">{alert.message}</p>
+            </div>
+            <button 
+              onClick={() => setPopupAlerts(prev => prev.filter(a => a.id !== alert.id))}
+              className="text-white/20 hover:text-white transition-colors"
+            >
+              <X className="w-4 h-4" />
+            </button>
+          </div>
+        ))}
+      </div>
+
+      <main className="flex-1 flex flex-col relative bg-[radial-gradient(circle_at_50%_50%,rgba(99,102,241,0.02),transparent)]">
         {/* Floating Header */}
         <header className="h-16 border-b border-border flex items-center justify-between px-8 bg-slate-100/80 dark:bg-slate-950/80 backdrop-blur-2xl sticky top-0 z-20 animate-fade-in transition-all duration-300">
-          <div className="flex flex-col">
-            <div className="flex items-center gap-2.5">
-              <div className="w-2 h-2 rounded-full bg-primary animate-pulse shadow-[0_0_8px_rgba(154,205,50,0.5)]" />
-              <h2 className="font-black text-base tracking-tight text-foreground">{projectName || "Sélectionner un projet"}</h2>
+          <div className="flex items-center gap-6">
+            <div className="flex flex-col">
+              <div className="flex items-center gap-2">
+                <Bot className="w-5 h-5 text-primary animate-pulse" />
+                <h2 className="font-black text-sm uppercase tracking-wider text-foreground">Chatbot-PFE-Hergli</h2>
+              </div>
+              <div className="flex items-center gap-1.5 mt-0.5">
+                <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Projet :</span>
+                <span className="text-[10px] font-bold text-primary/80 uppercase tracking-wider">{projectName || "Sélectionner un projet"}</span>
+              </div>
             </div>
-            <div className="flex items-center gap-2 mt-0.5">
-              <span className="text-[9px] font-black text-slate-500 uppercase tracking-widest">Projet Actuel:</span>
-              <span className="text-[10px] font-bold text-primary/80 uppercase tracking-wider">{projectName}</span>
+
+            {/* Separator */}
+            <div className="hidden md:block w-px h-8 bg-border" />
+
+              <div className="flex items-center gap-1.5 px-3 py-1.5 rounded-xl border border-white/5 bg-white/5 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                <Activity className="w-3.5 h-3.5 text-emerald-400" />
+                <span>Discussion: {messages.length} Message{messages.length > 1 ? "s" : ""}</span>
+              </div>
             </div>
-          </div>
-          <div className="flex items-center gap-4">
-            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${localStorage.getItem("pm_user") && (JSON.parse(localStorage.getItem("pm_user")!).roles?.some((r: string) => r.toUpperCase().includes("CEO")) || JSON.parse(localStorage.getItem("pm_user")!).role?.toUpperCase().includes("CEO"))
-              ? "bg-primary/10 border-primary/20 text-primary"
-              : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
-              }`}>
+                <div className="flex items-center gap-4">
+            {/* User Role Badge */}
+            <div className={`flex items-center gap-2 px-3 py-1.5 rounded-xl border ${
+              localStorage.getItem("pm_user") && (JSON.parse(localStorage.getItem("pm_user")!).roles?.some((r: string) => r.toUpperCase().includes("CEO")) || JSON.parse(localStorage.getItem("pm_user")!).role?.toUpperCase().includes("CEO"))
+                ? "bg-primary/10 border-primary/20 text-primary"
+                : "bg-emerald-500/10 border-emerald-500/20 text-emerald-400"
+            }`}>
               <div className="w-1.5 h-1.5 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.6)] animate-pulse" />
               <span className="text-[10px] font-black text-muted-foreground uppercase tracking-widest">
                 {localStorage.getItem("pm_user") && (JSON.parse(localStorage.getItem("pm_user")!).roles?.some((r: string) => r.toUpperCase().includes("CEO")) || JSON.parse(localStorage.getItem("pm_user")!).role?.toUpperCase().includes("CEO"))
                   ? "Vue CEO"
-                  : "Vue Project Manager"
+                  : "Vue Chef de Projet"
                 }
               </span>
+            </div>
+
+            {/* Notifications Alert Bubble */}
+            <div className="relative">
+              <button
+                onClick={() => setShowNotifications(!showNotifications)}
+                className={`w-9 h-9 rounded-xl flex items-center justify-center border transition-all relative
+                  ${showNotifications 
+                    ? "bg-primary/20 border-primary/40 text-primary" 
+                    : "bg-slate-800/20 border-slate-700/30 text-slate-400 hover:text-white hover:bg-slate-800/50"}`}
+                title="Notifications & Alertes"
+              >
+                <Bell className={`w-4 h-4 ${displayedAlerts.length > 0 ? "animate-bounce" : ""}`} />
+                {displayedAlerts.length > 0 && (
+                  <span className="absolute -top-1 -right-1 w-4 h-4 rounded-full bg-red-500 text-[9px] font-black text-white flex items-center justify-center shadow-[0_0_8px_rgba(239,68,68,0.8)] animate-pulse">
+                    {displayedAlerts.length}
+                  </span>
+                )}
+              </button>
+
+              {/* Notifications Dropdown Drawer */}
+              {showNotifications && (
+                <div className="absolute right-0 mt-2 w-80 bg-slate-900/95 dark:bg-slate-950/95 border border-white/10 rounded-2xl shadow-2xl backdrop-blur-2xl p-4 z-50 animate-fade-in flex flex-col gap-3">
+                  <div className="flex items-center justify-between border-b border-white/5 pb-2">
+                    <div className="flex items-center gap-2">
+                      <Bell className="w-4 h-4 text-primary" />
+                      <span className="text-xs font-black uppercase tracking-wider text-white">Alertes</span>
+                    </div>
+                    {displayedAlerts.length > 0 && (
+                      <button
+                        onClick={handleClearAllAlerts}
+                        className="text-[9px] font-black uppercase tracking-widest text-slate-500 hover:text-red-400 transition-colors"
+                      >
+                        Tout effacer
+                      </button>
+                    )}
+                  </div>
+
+                  <div className="max-h-60 overflow-y-auto space-y-2.5 scrollbar-none pr-1">
+                    {displayedAlerts.length === 0 ? (
+                      <div className="text-center py-6 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                        Aucune nouvelle alerte
+                      </div>
+                    ) : (
+                      displayedAlerts.map((alert, idx) => (
+                        <div
+                          key={alert.id || idx}
+                          className={`p-3 rounded-xl border flex items-start gap-2.5 transition-all group relative overflow-hidden
+                            ${alert.level === 'critique' ? 'bg-red-500/5 border-red-500/10 hover:border-red-500/25 text-red-400' : 'bg-amber-500/5 border-amber-500/10 hover:border-amber-500/25 text-amber-400'}`}
+                        >
+                          <div className={`p-1.5 rounded-lg shrink-0 ${alert.level === 'critique' ? 'bg-red-500/10' : 'bg-amber-500/10'}`}>
+                            <AlertTriangle className="w-3.5 h-3.5" />
+                          </div>
+                          <div className="flex-1 min-w-0 pr-6">
+                            <div className="flex flex-wrap items-center gap-1.5 mb-1">
+                              <span className="text-[8px] font-black uppercase tracking-widest opacity-60">Alerte IA {alert.type}</span>
+                              {alert.project_name && (
+                                <span className="px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest bg-slate-800 text-emerald-400 border border-emerald-500/10">
+                                  {alert.project_name}
+                                </span>
+                              )}
+                            </div>
+                            <p className="text-[11px] font-bold leading-normal text-white break-words">{alert.message}</p>
+                          </div>
+                          
+                          {/* Dismiss with a close button (X) */}
+                          <button
+                            onClick={() => handleDismissAlert(alert.id)}
+                            className="absolute right-2 top-1/2 -translate-y-1/2 w-6 h-6 rounded-lg flex items-center justify-center bg-white/5 border border-white/10 text-slate-400 hover:text-white hover:bg-red-500/20 hover:border-red-500/30 transition-all opacity-0 group-hover:opacity-100"
+                            title="Supprimer"
+                          >
+                            <X className="w-3 h-3" />
+                          </button>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </div>
+              )}
             </div>
 
             {activeConvId && (
@@ -1173,7 +1359,7 @@ export default function Chat() {
             </div>
           </form>
           <div className="text-center mt-2">
-            <span className="text-[10px] font-bold text-slate-600 uppercase tracking-[0.3em]">IA Analyse &bull; Redmine Sync</span>
+            <span className="text-[10px] font-bold text-slate-600 uppercase tracking-[0.3em]">Analyse Par IA & Donneé du Redmine</span>
           </div>
         </div>
       </main>

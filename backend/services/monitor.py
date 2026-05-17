@@ -24,6 +24,13 @@ async def check_project(project_id: str):
         metrics = redmine.compute_project_metrics(project_id)
         issues  = redmine.get_issues(project_id, status="open")
 
+        # Récupération du nom réel du projet
+        try:
+            p_data = redmine._get(f"/projects/{project_id}.json", cache_ttl=3600).get("project", {})
+            project_name = p_data.get("name", project_id)
+        except:
+            project_name = project_id
+
         # Mettre en cache les métriques (incluant la charge max calculée par le client)
         metrics_to_cache = {k: v for k, v in metrics.items() if k != "time_by_user" and k != "overdue_list"}
         cache_metrics(project_id, metrics_to_cache)
@@ -37,11 +44,18 @@ async def check_project(project_id: str):
             
             alert_key = f"alert_sent:{project_id}:retard:{issue['id']}"
             if not redis_conn.exists(alert_key):
+                assigned_name = issue.get("assigned") or "Non assigné"
+                msg_retard = f"NOUVEAU : Tâche #{issue['id']} en retard de {delay}j : {issue['subject'][:50]} (Assigné à : {assigned_name})"
+                
+                alert_id = f"{project_id}:retard:{issue['id']}"
                 push_alert(project_id, {
-                    "type":    "retard",
-                    "level":   "critique" if delay >= 5 else "warning",
-                    "message": f"NOUVEAU : Tâche #{issue['id']} en retard de {delay}j : {issue['subject'][:50]}",
-                    "issue_id": issue["id"],
+                    "id":            alert_id,
+                    "type":          "retard",
+                    "level":         "critique" if delay >= 5 else "warning",
+                    "message":       msg_retard,
+                    "issue_id":      issue["id"],
+                    "project_id":    project_id,
+                    "project_name":  project_name,
                 })
                 # On expire l'alerte après 24h pour permettre un rappel si pas résolu le lendemain
                 redis_conn.setex(alert_key, 86400, "1")
@@ -49,10 +63,13 @@ async def check_project(project_id: str):
                 await manager.broadcast_to_project(project_id, {
                     "type": "new_alert",
                     "alert": {
-                        "type": "retard",
-                        "level": "critique" if delay >= 5 else "warning",
-                        "message": f"NOUVEAU : Tâche #{issue['id']} en retard de {delay}j : {issue['subject'][:50]}",
-                        "issue_id": issue["id"]
+                        "id":            alert_id,
+                        "type":          "retard",
+                        "level":         "critique" if delay >= 5 else "warning",
+                        "message":       msg_retard,
+                        "issue_id":      issue["id"],
+                        "project_id":    project_id,
+                        "project_name":  project_name,
                     }
                 })
 
@@ -65,20 +82,30 @@ async def check_project(project_id: str):
             if prio_id >= 4 or prio_name.lower() in ["urgent", "immédiat", "immediate", "high"]:
                 alert_key = f"alert_sent:{project_id}:urgent:{issue['id']}"
                 if not redis_conn.exists(alert_key):
+                    assigned_name = issue.get("assigned") or "Non assigné"
+                    msg_urgent = f"ALERTE : Nouveau ticket URGENT #{issue['id']} : {issue['subject'][:50]} (Assigné à : {assigned_name})"
+                    
+                    alert_id = f"{project_id}:urgent:{issue['id']}"
                     push_alert(project_id, {
-                        "type":    "priorité",
-                        "level":   "critique",
-                        "message": f"ALERTE : Nouveau ticket URGENT #{issue['id']} : {issue['subject'][:50]}",
-                        "issue_id": issue["id"],
+                        "id":            alert_id,
+                        "type":          "priorité",
+                        "level":         "critique",
+                        "message":       msg_urgent,
+                        "issue_id":      issue["id"],
+                        "project_id":    project_id,
+                        "project_name":  project_name,
                     })
                     redis_conn.setex(alert_key, 86400, "1") # Une fois par jour
                     await manager.broadcast_to_project(project_id, {
                         "type": "new_alert",
                         "alert": {
-                            "type": "priorité",
-                            "level": "critique",
-                            "message": f"ALERTE : Nouveau ticket URGENT #{issue['id']} : {issue['subject'][:50]}",
-                            "issue_id": issue["id"]
+                            "id":            alert_id,
+                            "type":          "priorité",
+                            "level":         "critique",
+                            "message":       msg_urgent,
+                            "issue_id":      issue["id"],
+                            "project_id":    project_id,
+                            "project_name":  project_name,
                         }
                     })
 
@@ -174,11 +201,11 @@ scheduler = AsyncIOScheduler()
 def start_monitor():
     scheduler.add_job(
         check_all_projects,
-        trigger=IntervalTrigger(minutes=INTERVALLE),
+        trigger=IntervalTrigger(seconds=10),
         id="monitor", replace_existing=True,
     )
     scheduler.start()
-    logger.info(f"[Monitor] Démarré — Réactif — toutes les {INTERVALLE} min")
+    logger.info("[Monitor] Démarré — Réactif — toutes les 10 secondes")
 
 def stop_monitor():
     if scheduler.running:

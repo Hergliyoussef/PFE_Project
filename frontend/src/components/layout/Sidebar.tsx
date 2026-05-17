@@ -144,8 +144,8 @@ export default function Sidebar({
               </div>
             </div>
             <div className="flex flex-col leading-tight">
-              <span className="font-black text-foreground tracking-tight text-[13px]">Chatbot IA</span>
-              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">Gestion de Projet</span>
+              <span className="font-black text-foreground tracking-tight text-[13px]">Chatbot d'Assistance </span>
+              <span className="text-[10px] font-bold text-muted-foreground uppercase tracking-widest">à la Gestion de Projet</span>
             </div>
           </div>
           <ThemeToggle />
@@ -268,7 +268,7 @@ export default function Sidebar({
               <div className="flex items-center gap-1.5 mt-0.5">
                 <ShieldCheck className={`w-3.5 h-3.5 ${isCEO ? "text-primary" : "text-slate-500"}`} strokeWidth={2.5} />
                 <span className="text-[9px] font-black uppercase tracking-widest text-slate-500">
-                  {isCEO ? "CEO" : "Project Manager"}
+                  {isCEO ? "CEO" : "Chef de projet"}
                 </span>
               </div>
             </div>

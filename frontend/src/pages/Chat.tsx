@@ -4,10 +4,170 @@ import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Send, Loader2, Bot, User as UserIcon, CheckCircle2, XCircle, AlertTriangle, Clock, Calendar, Shield, BarChart3, Trophy, Target, Zap, Trash2, X, Activity, Bell } from "lucide-react"
-import api from "@/api/api"
+import axios from "axios"
 import Cookies from "js-cookie"
 import ReactMarkdown from "react-markdown"
+import remarkGfm from "remark-gfm"
 import { toast } from "sonner"
+
+const API_BASE_URL = import.meta.env.DEV 
+  ? "http://localhost:8000/api/v1" 
+  : "/api/v1"
+
+const getApi = () => {
+  const token = Cookies.get("pm_chatbot_access_token")
+  const instance = axios.create({
+    baseURL: API_BASE_URL,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    }
+  })
+
+  instance.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      const status = error.response?.status
+      if (status === 401 || status === 403) {
+        if (!window.location.pathname.includes("/login")) {
+          Cookies.remove("pm_chatbot_access_token")
+          localStorage.removeItem("pm_user")
+          localStorage.removeItem("pm_active_project")
+          localStorage.removeItem("pm_last_conv_id")
+          window.location.href = "/login?expired=true"
+        }
+      }
+      return Promise.reject(error)
+    }
+  )
+  return instance
+}
+
+const api = {
+  get: (url: string, config?: any) => getApi().get(url, config),
+  post: (url: string, data?: any, config?: any) => getApi().post(url, data, config),
+  put: (url: string, data?: any, config?: any) => getApi().put(url, data, config),
+  delete: (url: string, config?: any) => getApi().delete(url, config),
+}
+
+const SprintTaskSelector = ({
+  projectId,
+  sprintName,
+  onChange,
+}: {
+  projectId: string;
+  sprintName: string;
+  onChange: (ids: number[]) => void;
+}) => {
+  const [tasks, setTasks] = useState<any[]>([]);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let active = true;
+    const fetchTasks = async () => {
+      try {
+        setLoading(true);
+        const res = await api.get(`/projects/${projectId}/sprint-tasks?sprint_name=${encodeURIComponent(sprintName)}`);
+        if (active) {
+          setTasks(res.data.tasks || []);
+          // Envoyer l'état initial des tâches déjà dans le sprint
+          const initialIds = (res.data.tasks || [])
+            .filter((t: any) => t.in_sprint)
+            .map((t: any) => t.id);
+          onChange(initialIds);
+          setError(null);
+        }
+      } catch (err: any) {
+        if (active) {
+          setError("Impossible de charger les tâches.");
+        }
+      } finally {
+        if (active) {
+          setLoading(false);
+        }
+      }
+    };
+    if (projectId && sprintName) {
+      fetchTasks();
+    } else {
+      setLoading(false);
+    }
+    return () => {
+      active = false;
+    };
+  }, [projectId, sprintName]);
+
+  const handleToggle = (taskId: number) => {
+    const updated = tasks.map((t) =>
+      t.id === taskId ? { ...t, in_sprint: !t.in_sprint } : t
+    );
+    setTasks(updated);
+    const selectedIds = updated.filter((t) => t.in_sprint).map((t) => t.id);
+    onChange(selectedIds);
+  };
+
+  if (loading) {
+    return (
+      <div className="flex items-center gap-2 py-3 text-xs text-slate-400 font-sans">
+        <Loader2 className="animate-spin h-3.5 w-3.5 text-primary" />
+        Chargement des tâches...
+      </div>
+    );
+  }
+
+  if (error) {
+    return (
+      <div className="text-xs text-red-400 py-2 font-sans">
+        {error}
+      </div>
+    );
+  }
+
+  if (tasks.length === 0) {
+    return (
+      <div className="text-xs text-slate-500 py-2 italic font-sans">
+        Aucune tâche trouvée dans ce projet.
+      </div>
+    );
+  }
+
+  return (
+    <div className="flex flex-col gap-1.5 mt-2 max-h-[220px] overflow-y-auto pr-1 font-sans scrollbar-thin scrollbar-thumb-white/10 scrollbar-track-transparent">
+      {tasks.map((task) => (
+        <label
+          key={task.id}
+          className={`flex items-start gap-3 p-2.5 rounded-lg border text-xs cursor-pointer transition-all ${
+            task.in_sprint
+              ? 'bg-primary/10 border-primary/30 text-white'
+              : 'bg-slate-900/40 border-white/5 text-slate-400 hover:bg-slate-900/60 hover:text-slate-300'
+          }`}
+        >
+          <input
+            type="checkbox"
+            checked={task.in_sprint}
+            onChange={() => handleToggle(task.id)}
+            className="mt-0.5 rounded border-white/10 bg-slate-900/50 text-primary focus:ring-0 focus:ring-offset-0 w-3.5 h-3.5 cursor-pointer"
+          />
+          <div className="flex flex-col flex-1 min-w-0">
+            <span className="font-semibold truncate text-[11px]">#{task.id} - {task.subject}</span>
+            <div className="flex items-center gap-2 mt-1">
+              <span className="px-1.5 py-0.5 rounded text-[8px] bg-white/5 text-slate-400 border border-white/5">
+                {task.status}
+              </span>
+              {task.other_sprint && !task.in_sprint && (
+                <span className="text-[8px] text-amber-400 font-medium">
+                  (Dans le sprint: {task.other_sprint})
+                </span>
+              )}
+            </div>
+          </div>
+        </label>
+      ))}
+    </div>
+  );
+};
+
 import { BarChart, Bar, XAxis, YAxis, CartesianGrid, ResponsiveContainer, Tooltip as ChartTooltip } from "recharts"
 
 interface Message {
@@ -26,6 +186,7 @@ export default function Chat() {
     return localStorage.getItem("pm_last_conv_id") || undefined
   })
   const scrollRef = useRef<HTMLDivElement>(null)
+  const textareaRef = useRef<HTMLTextAreaElement>(null)
   const [projectName, setProjectName] = useState("Projet")
   const [activeAlerts, setActiveAlerts] = useState<any[]>([])
   const [popupAlerts, setPopupAlerts] = useState<any[]>([])
@@ -151,6 +312,13 @@ export default function Chat() {
     }
   }, [messages])
 
+  useEffect(() => {
+    if (textareaRef.current) {
+      textareaRef.current.style.height = "auto"
+      textareaRef.current.style.height = `${textareaRef.current.scrollHeight}px`
+    }
+  }, [input])
+
   const handleSendMessage = async (e?: React.FormEvent) => {
     if (e) e.preventDefault()
     if (!input.trim() || loading) return
@@ -215,6 +383,17 @@ export default function Chat() {
                 localStorage.setItem("pm_last_conv_id", parsed.conversation_id);
               }
 
+              if (parsed.event === 'messages_saved') {
+                setMessages(prev => {
+                  const newMsgs = [...prev];
+                  if (newMsgs.length >= 2) {
+                    newMsgs[newMsgs.length - 2].id = parsed.user_message_id;
+                    newMsgs[newMsgs.length - 1].id = parsed.assistant_message_id;
+                  }
+                  return newMsgs;
+                });
+              }
+
               if (parsed.token) {
                 fullContent += parsed.token;
                 // Mise à jour du DERNIER message (celui qu'on vient d'ajouter)
@@ -243,6 +422,7 @@ export default function Chat() {
       toast.error("Erreur de communication avec l'assistant.");
     } finally {
       setLoading(false)
+      window.dispatchEvent(new Event("refreshConversations"));
     }
   }
 
@@ -573,7 +753,37 @@ export default function Chat() {
                     : "bg-primary/10 backdrop-blur-md border border-primary/30 text-foreground rounded-tr-none shadow-lg shadow-primary/5"
                     }`}>
                     <div className="text-sm leading-relaxed prose prose-slate dark:prose-invert prose-p:my-0 prose-pre:bg-slate-950/50 prose-pre:border prose-pre:border-border max-w-none pr-6 group relative">
-                      <ReactMarkdown>{msg.content}</ReactMarkdown>
+                      <ReactMarkdown
+                        remarkPlugins={[remarkGfm]}
+                        components={{
+                          table: ({ children }) => (
+                            <div className="overflow-x-auto my-3 rounded-xl border border-white/10 shadow-lg">
+                              <table className="w-full text-xs border-collapse">{children}</table>
+                            </div>
+                          ),
+                          thead: ({ children }) => (
+                            <thead className="bg-primary/20 text-primary">{children}</thead>
+                          ),
+                          tbody: ({ children }) => (
+                            <tbody className="divide-y divide-white/5">{children}</tbody>
+                          ),
+                          tr: ({ children }) => (
+                            <tr className="hover:bg-white/5 transition-colors">{children}</tr>
+                          ),
+                          th: ({ children }) => (
+                            <th className="px-4 py-2.5 text-left font-black uppercase tracking-widest text-[10px] text-primary whitespace-nowrap">{children}</th>
+                          ),
+                          td: ({ children }) => (
+                            <td className="px-4 py-2 text-slate-300 font-medium">{children}</td>
+                          ),
+                          strong: ({ children }) => (
+                            <strong className="font-bold text-slate-200">{children}</strong>
+                          ),
+                          code: ({ children }) => (
+                            <code className="bg-slate-800/80 text-emerald-400 px-1.5 py-0.5 rounded text-[11px] font-mono">{children}</code>
+                          ),
+                        }}
+                      >{msg.content}</ReactMarkdown>
 
                       {msg.id && (
                         <button
@@ -608,6 +818,144 @@ export default function Chat() {
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
                                   {Object.entries(action.parameters || {}).map(([key, value]) => {
                                     const isMissing = value === undefined || value === null || value === "" || (Array.isArray(value) && value.length === 0);
+
+                                     // ── RENDU SPÉCIAL POUR CREATE_VERSION ─────
+                                     if (action.action_type === 'create_version') {
+                                       if (key === 'name') {
+                                         return (
+                                           <div key={key} className="flex flex-col">
+                                             <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                                               Nom du sprint / version
+                                               <span className="px-1.5 py-0.5 rounded text-[8px] bg-red-500/20 text-red-400">Requis</span>
+                                             </span>
+                                             <input
+                                               type="text"
+                                               defaultValue={isMissing ? '' : String(value)}
+                                               placeholder="Ex: Sprint 1"
+                                               className={`bg-slate-900/50 border rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50 transition-colors ${isMissing ? 'border-red-500/30' : 'border-white/10'}`}
+                                               onChange={(e) => { action.parameters[key] = e.target.value; }}
+                                             />
+                                           </div>
+                                         )
+                                       }
+
+                                       if (key === 'description') {
+                                         return (
+                                           <div key={key} className="flex flex-col col-span-1 md:col-span-2">
+                                             <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1.5">
+                                               Description
+                                               <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span>
+                                             </span>
+                                             <textarea
+                                               defaultValue={isMissing ? '' : String(value)}
+                                               placeholder="Objectifs du sprint, périmètre..."
+                                               className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/50 min-h-[60px]"
+                                               onChange={(e) => { action.parameters[key] = e.target.value; }}
+                                             />
+                                           </div>
+                                         )
+                                       }
+
+                                       if (key === 'issue_ids') {
+                                         return null;
+                                       }
+
+                                       if (['name', 'description', 'issue_ids'].includes(key)) return null;
+                                     }
+
+                                     // ── RENDU SPÉCIAL POUR DELETE_VERSION ─────
+                                     if (action.action_type === 'delete_version') {
+                                       if (key === 'name') {
+                                         return (
+                                           <div key={key} className="flex flex-col col-span-1 md:col-span-2 font-sans">
+                                             <span className="text-[9px] text-red-400 uppercase tracking-wider mb-1 flex items-center gap-1.5 font-semibold">
+                                               Nom du sprint / version à supprimer
+                                               <span className="px-1.5 py-0.5 rounded text-[8px] bg-red-500/20 text-red-400">Requis</span>
+                                             </span>
+                                             <input
+                                               type="text"
+                                               defaultValue={isMissing ? '' : String(value)}
+                                               placeholder="Ex: s.4"
+                                               className="bg-slate-900/50 border border-red-500/30 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-red-500/50 transition-colors"
+                                               onChange={(e) => { action.parameters[key] = e.target.value; }}
+                                             />
+                                           </div>
+                                         )
+                                       }
+                                       if (['name', 'project_id'].includes(key)) return null;
+                                     }
+
+                                     // ── RENDU SPÉCIAL POUR UPDATE_VERSION ─────
+                                     if (action.action_type === 'update_version') {
+                                       if (key === 'name') {
+                                         return (
+                                           <div key={key} className="flex flex-col font-sans">
+                                             <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1.5 font-semibold">
+                                               Sprint à modifier
+                                               <span className="px-1.5 py-0.5 rounded text-[8px] bg-red-500/20 text-red-400">Requis</span>
+                                             </span>
+                                             <input
+                                               type="text"
+                                               defaultValue={isMissing ? '' : String(value)}
+                                               placeholder="Ex: s.4"
+                                               className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50 transition-colors"
+                                               onChange={(e) => { action.parameters[key] = e.target.value; }}
+                                             />
+                                           </div>
+                                         )
+                                       }
+                                       if (key === 'new_name') {
+                                         return (
+                                           <div key={key} className="flex flex-col font-sans">
+                                             <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1.5 font-semibold">
+                                               Nouveau nom du sprint
+                                               <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span>
+                                             </span>
+                                             <input
+                                               type="text"
+                                               defaultValue={isMissing ? '' : String(value)}
+                                               placeholder="Ex: s.5 (pour renommer)"
+                                               className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50 transition-colors"
+                                               onChange={(e) => { action.parameters[key] = e.target.value; }}
+                                             />
+                                           </div>
+                                         )
+                                       }
+                                       if (key === 'description') {
+                                         return (
+                                           <div key={key} className="flex flex-col col-span-1 md:col-span-2 font-sans">
+                                             <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1.5 font-semibold">
+                                               Nouvelle description
+                                               <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span>
+                                             </span>
+                                             <textarea
+                                               defaultValue={isMissing ? '' : String(value)}
+                                               placeholder="Objectifs mis à jour..."
+                                               className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-2 text-xs text-white focus:outline-none focus:border-primary/50 min-h-[60px]"
+                                               onChange={(e) => { action.parameters[key] = e.target.value; }}
+                                             />
+                                           </div>
+                                         )
+                                       }
+                                        if (key === 'project_id') {
+                                          return (
+                                            <div key={key} className="flex flex-col col-span-1 md:col-span-2 font-sans mt-1">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-1.5 font-semibold">
+                                                Associer / Retirer des tâches du sprint
+                                                <span className="px-1.5 py-0.5 rounded text-[8px] bg-emerald-500/20 text-emerald-400">Interactif</span>
+                                              </span>
+                                              <SprintTaskSelector
+                                                projectId={String(value || '')}
+                                                sprintName={String(action.parameters.name || '')}
+                                                onChange={(ids) => {
+                                                  action.parameters.issue_ids = ids;
+                                                }}
+                                              />
+                                            </div>
+                                          )
+                                        }
+                                        if (['name', 'new_name', 'description', 'project_id', 'issue_ids'].includes(key)) return null;
+                                      }
 
                                     // ── RENDU SPÉCIAL POUR CREATE_USER (DOIT ÊTRE EN PREMIER) ─────
                                     if (action.action_type === 'create_user') {
@@ -825,30 +1173,7 @@ export default function Chat() {
                                         }
                                       }
 
-                                      if (key === 'status_id') {
-                                        if (isMissing) {
-                                          return (
-                                            <div key={key} className="flex flex-col col-span-1 md:col-span-2 mt-2">
-                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">Nouveau Statut <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
-                                              <div className="flex flex-wrap gap-4">
-                                                {[{ id: 1, label: 'Nouveau' }, { id: 2, label: 'En cours' }, { id: 3, label: 'Résolu' }, { id: 4, label: 'Commentaire' }, { id: 5, label: 'Fermé' }, { id: 6, label: 'Rejeté' }].map(opt => (
-                                                  <label key={opt.id} className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
-                                                    <input type="radio" name={`status_${idx}`} onChange={() => { action.parameters[key] = opt.id; }} className="accent-primary" /> {opt.label}
-                                                  </label>
-                                                ))}
-                                              </div>
-                                            </div>
-                                          )
-                                        } else {
-                                          const label = value === 1 ? 'Nouveau' : value === 2 ? 'En cours' : value === 3 ? 'Résolu' : value === 4 ? 'Commentaire' : value === 5 ? 'Fermé' : value === 6 ? 'Rejeté' : value;
-                                          return (
-                                            <div key={key} className="flex flex-col">
-                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Nouveau Statut</span>
-                                              <input type="text" readOnly defaultValue={String(label)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
-                                            </div>
-                                          )
-                                        }
-                                      }
+
 
                                       if (key === 'notes') {
                                         if (isMissing) {
@@ -870,6 +1195,36 @@ export default function Chat() {
                                     }
 
                                     if (action.action_type === 'create_issue' || action.action_type === 'update_issue') {
+                                      if (key === 'status_id') {
+                                        if (isMissing) {
+                                          return (
+                                            <div key={key} className="flex flex-col col-span-1 md:col-span-2 mt-2">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-2 flex items-center gap-2">
+                                                {action.action_type === 'create_issue' ? 'Statut de départ' : 'Nouveau Statut'}{' '}
+                                                <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span>
+                                              </span>
+                                              <div className="flex flex-wrap gap-4">
+                                                {[{ id: 1, label: 'Nouveau' }, { id: 2, label: 'En cours' }, { id: 3, label: 'Résolu' }, { id: 4, label: 'Commentaire' }, { id: 5, label: 'Fermé' }, { id: 6, label: 'Rejeté' }].map(opt => (
+                                                  <label key={opt.id} className="flex items-center gap-2 cursor-pointer text-xs text-slate-200">
+                                                    <input type="radio" name={`status_${idx}`} onChange={() => { action.parameters[key] = opt.id; }} className="accent-primary" /> {opt.label}
+                                                  </label>
+                                                ))}
+                                              </div>
+                                            </div>
+                                          )
+                                        } else {
+                                          const label = value === 1 ? 'Nouveau' : value === 2 ? 'En cours' : value === 3 ? 'Résolu' : value === 4 ? 'Commentaire' : value === 5 ? 'Fermé' : value === 6 ? 'Rejeté' : value;
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">
+                                                {action.action_type === 'create_issue' ? 'Statut de départ' : 'Nouveau Statut'}
+                                              </span>
+                                              <input type="text" readOnly defaultValue={String(label)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                            </div>
+                                          )
+                                        }
+                                      }
+
                                       if (key === 'tracker_id') {
                                         if (isMissing) {
                                           return (
@@ -1010,9 +1365,27 @@ export default function Chat() {
                                           )
                                         }
                                       }
+
+                                      if (key === 'fixed_version') {
+                                        if (isMissing) {
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Sprint / Version <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
+                                              <input type="text" placeholder="Ex: s.4" className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50" onChange={(e) => { action.parameters[key] = e.target.value; }} />
+                                            </div>
+                                          )
+                                        } else {
+                                          return (
+                                            <div key={key} className="flex flex-col">
+                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Sprint / Version</span>
+                                              <input type="text" readOnly defaultValue={String(value)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
+                                            </div>
+                                          )
+                                        }
+                                      }
                                     }
 
-                                    if (isMissing) return null;
+                                    if (isMissing || ['name', 'description', 'issue_ids'].includes(key)) return null;
 
                                     return (
                                       <div key={key} className="flex flex-col">
@@ -1340,18 +1713,28 @@ export default function Chat() {
             className="max-w-5xl mx-auto relative group px-4"
           >
             <div className="absolute -inset-1 bg-gradient-to-r from-primary/20 to-indigo-600/20 rounded-[30px] blur opacity-0 group-focus-within:opacity-100 transition duration-500" />
-            <div className="relative">
-              <Input
+            <div className="relative flex items-end">
+              <textarea
+                ref={textareaRef}
                 value={input}
                 onChange={(e) => setInput(e.target.value)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" && !e.shiftKey) {
+                    e.preventDefault();
+                    if (input.trim() && !loading) {
+                      handleSendMessage(e as any);
+                    }
+                  }
+                }}
                 placeholder={`Poser une question sur ${projectName}...`}
-                className="w-full h-12 pl-6 pr-16 bg-card backdrop-blur-2xl border-border focus:border-primary/40 text-sm rounded-[20px] shadow-[0_20px_50px_rgba(0,0,0,0.1)] transition-all font-sans placeholder:text-foreground placeholder:font-black focus:ring-0 glow-primary-hover"
+                className="w-full min-h-[48px] max-h-[600px] py-3.5 pl-6 pr-16 bg-card backdrop-blur-2xl border border-border focus:border-primary/40 text-sm rounded-[20px] shadow-[0_20px_50px_rgba(0,0,0,0.1)] transition-all font-sans placeholder:text-foreground placeholder:font-black focus:ring-0 focus:outline-none glow-primary-hover resize-none overflow-y-auto custom-scrollbar leading-relaxed"
                 disabled={loading}
+                rows={1}
               />
               <Button
                 type="submit"
                 size="icon"
-                className="absolute right-2 top-2 h-8 w-8 rounded-[14px] bg-gradient-to-br from-red-600 to-rose-600 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-red-500/20"
+                className="absolute right-2 bottom-2 h-8 w-8 rounded-[14px] bg-gradient-to-br from-red-600 to-rose-600 hover:scale-105 active:scale-95 transition-all shadow-xl shadow-red-500/20"
                 disabled={loading || !input.trim()}
               >
                 {loading ? <Loader2 className="w-5 h-5 animate-spin" /> : <Send className="w-5 h-5" />}

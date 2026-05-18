@@ -3,16 +3,6 @@ import sys, os
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 from config import settings
 
-# ── Langfuse ──────────────────────────────────────────────────
-import os
-os.environ["LANGFUSE_PUBLIC_KEY"] = settings.langfuse_public_key
-os.environ["LANGFUSE_SECRET_KEY"] = settings.langfuse_secret_key
-os.environ["LANGFUSE_HOST"] = settings.langfuse_base_url
-
-from langfuse.langchain import CallbackHandler
-langfuse_handler = CallbackHandler() 
-
-
 logger = logging.getLogger(__name__)
 
 OPENROUTER_BASE = "https://openrouter.ai/api/v1"
@@ -31,26 +21,43 @@ def _openrouter(model: str):
             "HTTP-Referer": "http://localhost:8501",
             "X-Title":      settings.app_name,
         },
-        callbacks=[langfuse_handler]
     )
 
 
 def _groq(model: str):
-    
     from langchain_openai import ChatOpenAI
     return ChatOpenAI(
         model       = model,
         api_key     = settings.groq_api_key,
         base_url    = GROQ_BASE,
         temperature = 0.1,
-        callbacks=[langfuse_handler]
+    )
+
+
+def _local(model: str):
+    """Client Local Société (Ollama / Gateway compatible OpenAI)."""
+    from langchain_openai import ChatOpenAI
+    return ChatOpenAI(
+        model       = model,
+        api_key     = "not-needed",
+        base_url    = settings.local_llm_url,
+        temperature = 0.1,
     )
 
 
 def get_llm(agent: str = "supervisor"):
     """
-    Retourne le bon LLM selon l'agent.
+    Retourne le bon LLM selon l'agent (supporte OpenRouter, Groq ou Local Société).
     """
+    # ── Option 1 : Mode Local Société ──────────────────────────
+    if settings.llm_provider == "local":
+        # En mode local, on force TOUS les agents à utiliser le modèle local de la société (gemma4:26b)
+        # pour éviter d'essayer d'interroger Ollama avec des noms de modèles cloud LLaMA.
+        model = settings.local_llm_model
+        logger.info(f"[LLM-LOCAL] Agent '{agent}' -> Modèle Société '{model}' sur {settings.local_llm_url}")
+        return _local(model)
+
+    # ── Option 2 : Mode Standard (OpenRouter / Groq) ───────────
     model_map = {
         "supervisor": settings.llm_supervisor,
         "analyse":    settings.llm_analyse,
@@ -63,7 +70,6 @@ def get_llm(agent: str = "supervisor"):
     
     def _get_client(m: str):
         # Si le modèle contient un '/' ou n'est pas un modèle Groq connu, on passe par OpenRouter
-       
         is_groq_model = any(kw in m.lower() for kw in ["llama", "mixtral", "gemma"]) and "/" not in m
         
         if is_groq_model:

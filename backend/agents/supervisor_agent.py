@@ -245,6 +245,7 @@ async def run_agent_stream(question: str, project_id: str, user_id: str, user_ro
                 db.add(msg_ai)
                 db.commit()
                 logger.info(f"[Postgres Stream] Discussion et messages sauvegardés avec succès pour {conversation_id}")
+                yield f"data: {json.dumps({'event': 'messages_saved', 'user_message_id': msg_user.id, 'assistant_message_id': msg_ai.id})}\n\n"
             except Exception as inner_db_err:
                 db.rollback()
                 logger.error(f"[Postgres Stream] Erreur transaction : {inner_db_err}")

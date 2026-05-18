@@ -4,9 +4,42 @@ import { ScrollArea } from "@/components/ui/scroll-area"
 import { Separator } from "@/components/ui/separator"
 import { Plus, MessageSquare, Trash2, LogOut, FolderKanban, LayoutDashboard, ShieldCheck } from "lucide-react"
 import { ThemeToggle } from "@/components/ui/theme-toggle"
-import api from "@/api/api"
+import axios from "axios"
 import Cookies from "js-cookie"
 import { useNavigate } from "react-router-dom"
+
+const API_BASE_URL = import.meta.env.DEV 
+  ? "http://localhost:8000/api/v1" 
+  : "/api/v1"
+
+const getApi = () => {
+  const token = Cookies.get("pm_chatbot_access_token")
+  const instance = axios.create({
+    baseURL: API_BASE_URL,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
+    }
+  })
+
+  instance.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      const status = error.response?.status
+      if (status === 401 || status === 403) {
+        if (!window.location.pathname.includes("/login")) {
+          Cookies.remove("pm_chatbot_access_token")
+          localStorage.removeItem("pm_user")
+          localStorage.removeItem("pm_active_project")
+          localStorage.removeItem("pm_last_conv_id")
+          window.location.href = "/login?expired=true"
+        }
+      }
+      return Promise.reject(error)
+    }
+  )
+  return instance
+}
 import {
   Select,
   SelectContent,
@@ -75,13 +108,22 @@ export default function Sidebar({
 
   useEffect(() => {
     fetchConversations()
+    
+    const handleRefresh = () => {
+      fetchConversations()
+    }
+    window.addEventListener("refreshConversations", handleRefresh)
+    
     const interval = setInterval(fetchConversations, 30000)
-    return () => clearInterval(interval)
+    return () => {
+      clearInterval(interval)
+      window.removeEventListener("refreshConversations", handleRefresh)
+    }
   }, [activeProject, activeConvId])
 
   const fetchConversations = async () => {
     try {
-      const response = await api.get("/conversations")
+      const response = await getApi().get("/conversations")
       setConversations(response.data.conversations || [])
     } catch (err) {
       console.error("Erreur lors du chargement des conversations", err)
@@ -92,7 +134,7 @@ export default function Sidebar({
     e.stopPropagation()
     if (!confirm("Supprimer cette discussion ?")) return
     try {
-      await api.delete(`/conversations/${id}`)
+      await getApi().delete(`/conversations/${id}`)
       setConversations(prev => prev.filter(c => c.id !== id))
       if (activeConvId === id) onNewChat()
     } catch (err) {
@@ -159,7 +201,7 @@ export default function Sidebar({
                   <FolderKanban className="w-4 h-4" strokeWidth={2.5} />
                 </div>
                 <div className="flex flex-col items-start truncate leading-tight">
-                  <span className="text-[9px] font-black text-primary uppercase tracking-widest">Projet</span>
+                  <span className="text-[9px] font-black text-primary uppercase tracking-widest">Projets ({projects.length})</span>
                   <SelectValue placeholder="Choisir un projet" className="font-bold text-xs text-foreground" />
                 </div>
               </div>

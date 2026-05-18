@@ -192,6 +192,20 @@ class RedmineClient:
         except Exception as e:
             logger.error(f"[Cache] Erreur lors de l'invalidation : {e}")
 
+    def get_version_id_by_name(self, project_id: str, version_name: str, api_key: str = None) -> int:
+        """Récupère l'ID d'une version/sprint par son nom pour un projet donné sur Redmine."""
+        if not project_id or not version_name:
+            return None
+        try:
+            data = self._get(f"/projects/{project_id}/versions.json", api_key=api_key)
+            if data and "versions" in data:
+                for v in data["versions"]:
+                    if v.get("name", "").lower().strip() == version_name.lower().strip():
+                        return int(v["id"])
+        except Exception as e:
+            logger.error(f"[Redmine] Erreur lors de la recherche de la version '{version_name}' : {e}")
+        return None
+
     def execute_action(self, action: str, params: dict, api_key: str = None) -> dict:
         """Exécute une action planifiée."""
 
@@ -234,6 +248,12 @@ class RedmineClient:
                 raise Exception("L'ID du ticket (issue_id) est obligatoire pour supprimer une tâche. Précisez le numéro du ticket.")
         elif action == "update_user":
             return self.update_user(api_key=api_key, **params)
+        elif action == "create_version":
+            return self.create_version_and_assign_issues(api_key=api_key, **params)
+        elif action == "delete_version":
+            return {"success": self.delete_version(api_key=api_key, **params)}
+        elif action == "update_version":
+            return {"success": self.update_version(api_key=api_key, **params)}
         else:
             raise ValueError(f"Action non supportée: {action}")
 
@@ -552,6 +572,13 @@ class RedmineClient:
                 "priority_id": safe_priority
             }
         }
+
+        # Résolution de fixed_version par son nom en fixed_version_id
+        fixed_version = kwargs.get("fixed_version")
+        if fixed_version:
+            version_id = self.get_version_id_by_name(project_id, str(fixed_version), api_key=api_key)
+            if version_id:
+                payload["issue"]["fixed_version_id"] = version_id
         
         if estimated_hours is not None and str(estimated_hours).strip() != "":
             try:
@@ -638,7 +665,29 @@ class RedmineClient:
             if str(user_id).isdigit() and user_id:
                 # Note: On suppose que l'utilisateur est déjà dans le projet, sinon il faudrait project_id
                 issue_payload["assigned_to_id"] = int(user_id)
- 
+
+        # Résolution de fixed_version par son nom en fixed_version_id si présent
+        fixed_version = kwargs.get("fixed_version")
+        if fixed_version:
+            project_id = kwargs.get("project_id")
+            if not project_id:
+                try:
+                    issue_data = self._get(f"/issues/{issue_id}.json", api_key=api_key)
+                    if issue_data and "issue" in issue_data:
+                        project_id = issue_data["issue"].get("project", {}).get("id")
+                except Exception as e:
+                    logger.error(f"[Redmine] Impossible de récupérer le projet pour le ticket {issue_id} : {e}")
+            if project_id:
+                version_id = self.get_version_id_by_name(str(project_id), str(fixed_version), api_key=api_key)
+                if version_id:
+                    issue_payload["fixed_version_id"] = version_id
+
+        if kwargs.get("fixed_version_id") is not None:
+            try:
+                issue_payload["fixed_version_id"] = int(kwargs.get("fixed_version_id"))
+            except (ValueError, TypeError):
+                pass
+
         if not issue_payload:
             raise Exception("Aucune modification valide n'a été demandée pour ce ticket.")
  
@@ -824,6 +873,7 @@ class RedmineClient:
         logger.info(f"[Metrics] {len(critical_issues)} tâches critiques détectées sur {len(all_issues)} tickets total")
 
         total = len(all_issues) or 1
+        total_estimated = sum(float(i.get("estimated_hours") or 0) for i in all_issues)
         
         # Calcul de la progression sur TOUS les problèmes
         computed_ratios = []
@@ -982,6 +1032,40 @@ class RedmineClient:
         except Exception as e:
             logger.error(f"[Metrics] Erreur récupération membres pour {project_id} : {e}")
 
+        # Construction propre de status_distribution avec toujours les 6 statuts standards
+        all_standard_statuses = ["Nouveau", "En cours", "Résolu", "Commentaire", "Fermé", "Rejeté"]
+        computed_status_dist = []
+        for s in all_standard_statuses:
+            computed_status_dist.append({
+                "name": s,
+                "value": status_counts.get(s, 0),
+                "color": status_colors.get(s, "#a855f7")
+            })
+        for k, v in status_counts.items():
+            if k not in all_standard_statuses:
+                computed_status_dist.append({
+                    "name": k,
+                    "value": v,
+                    "color": status_colors.get(k, "#a855f7")
+                })
+
+        # Construction propre de priority_distribution avec toujours les 5 priorités standards
+        all_standard_priorities = ["Immédiat", "Urgent", "Haut", "Normal", "Bas"]
+        computed_priority_dist = []
+        for p in all_standard_priorities:
+            computed_priority_dist.append({
+                "name": p,
+                "value": priority_counts.get(p, 0),
+                "color": priority_colors.get(p, "#64748b")
+            })
+        for k, v in priority_counts.items():
+            if k not in all_standard_priorities:
+                computed_priority_dist.append({
+                    "name": k,
+                    "value": v,
+                    "color": priority_colors.get(k, "#64748b")
+                })
+
         return {
             "project_id": project_id,
             "total_issues": len(all_issues),
@@ -997,14 +1081,8 @@ class RedmineClient:
             "velocity": velocity,
             "max_workload": round(max([min((h / 40) * 100, 100) for h in self.get_time_by_user(project_id).values()], default=0), 1),
             "time_by_user": self.get_time_by_user(project_id),
-            "status_distribution": [
-                {"name": k, "value": v, "color": status_colors.get(k, "#a855f7")} 
-                for k, v in status_counts.items()
-            ],
-            "priority_distribution": [
-                {"name": k, "value": v, "color": priority_colors.get(k, "#64748b")} 
-                for k, v in priority_counts.items()
-            ],
+            "status_distribution": computed_status_dist,
+            "priority_distribution": computed_priority_dist,
             "tracker_distribution": [
                 {"name": k, "value": v, "color": tracker_colors.get(k, "#3b82f6")}
                 for k, v in tracker_counts.items()
@@ -1029,8 +1107,167 @@ class RedmineClient:
             ],
             "team_workload": team_workload,
             "bottleneck_alert": bottleneck_alert,
-            "members_detailed": members_list
+            "members_detailed": members_list,
+            "total_estimated": total_estimated,
+            "not_started_list": [
+                {
+                    "id": i["id"],
+                    "subject": i["subject"],
+                    "priority": i.get("priority") if isinstance(i.get("priority"), str) else i.get("priority", {}).get("name", "Normal"),
+                    "assignee": (i.get("assigned") or i.get("assigned_to")) if isinstance(i.get("assigned") or i.get("assigned_to"), str) else (i.get("assigned_to") or {}).get("name", "Non assigné")
+                } for i in not_started[:4]
+            ]
         }
+
+    def create_version_and_assign_issues(self, project_id: str, name: str, description: str = "", issue_ids: list = None, api_key: str = None, **kwargs) -> dict:
+        """Crée une version (sprint) sur Redmine et y associe optionnellement des tâches (ou automatiquement si vide)."""
+        if not project_id:
+            raise Exception("Le projet (project_id) est obligatoire pour créer une version/sprint.")
+        if not name:
+            raise Exception("Le nom de la version/sprint est obligatoire.")
+
+        # 1. Création de la version dans Redmine
+        payload = {
+            "version": {
+                "name": name,
+                "description": description or "",
+                "status": "open",
+                "sharing": "none"
+            }
+        }
+        
+        # Envoyer la requête POST
+        version_data = self._post(f"/projects/{project_id}/versions.json", payload, api_key=api_key)
+        
+        version_id = version_data.get("version", {}).get("id")
+        if not version_id:
+            raise Exception("Erreur lors de la création de la version sur Redmine.")
+
+        assigned_issues = []
+        # 2. Association des tickets (spécifiés ou résolus automatiquement si vide)
+        resolved_issue_ids = []
+        if issue_ids:
+            # S'assurer que c'est une liste
+            if isinstance(issue_ids, str):
+                try:
+                    resolved_issue_ids = [int(id_str.strip()) for id_str in issue_ids.split(",") if id_str.strip()]
+                except ValueError:
+                    resolved_issue_ids = []
+            elif isinstance(issue_ids, list):
+                for item in issue_ids:
+                    try:
+                        resolved_issue_ids.append(int(item))
+                    except (ValueError, TypeError):
+                        pass
+            else:
+                try:
+                    resolved_issue_ids = [int(issue_ids)]
+                except (ValueError, TypeError):
+                    pass
+
+        for issue_id in resolved_issue_ids:
+            try:
+                self._put(f"/issues/{issue_id}.json", {"issue": {"fixed_version_id": version_id}}, api_key=api_key)
+                assigned_issues.append(issue_id)
+            except Exception as e:
+                logger.error(f"[Redmine] Impossible d'associer la tâche {issue_id} à la version {version_id} : {e}")
+
+        # Invalider le cache des tickets pour ce projet pour rafraîchir l'UI
+        self._invalidate_project_cache()
+
+        return {
+            "success": True,
+            "version": version_data.get("version"),
+            "assigned_issues": assigned_issues
+        }
+
+    def delete_version(self, project_id: str, name: str, api_key: str = None, **kwargs) -> bool:
+        """Supprime une version (sprint) sur Redmine."""
+        if not project_id:
+            raise Exception("Le projet (project_id) est obligatoire pour supprimer une version.")
+        if not name:
+            raise Exception("Le nom de la version/sprint est obligatoire.")
+
+        # Résoudre l'ID de la version par son nom
+        version_id = self.get_version_id_by_name(project_id, name, api_key=api_key)
+        if not version_id:
+            raise Exception(f"La version/sprint '{name}' n'existe pas dans ce projet.")
+
+        success = self._delete(f"/versions/{version_id}.json", api_key=api_key)
+        if success:
+            self._invalidate_project_cache()
+            logger.info(f"[Redmine] Version '{name}' (ID: {version_id}) supprimée avec succès.")
+        return success
+
+    def update_version(self, project_id: str, name: str, new_name: str = None, description: str = None, status: str = None, issue_ids: list = None, api_key: str = None, **kwargs) -> bool:
+        """Modifie une version (sprint) sur Redmine."""
+        if not project_id:
+            raise Exception("Le projet (project_id) est obligatoire pour modifier une version.")
+        if not name:
+            raise Exception("Le nom de la version actuelle est obligatoire.")
+
+        # Résoudre l'ID de la version par son nom
+        version_id = self.get_version_id_by_name(project_id, name, api_key=api_key)
+        if not version_id:
+            raise Exception(f"La version/sprint '{name}' n'existe pas dans ce projet.")
+
+        # Préparer le payload
+        payload = {"version": {}}
+        if new_name:
+            payload["version"]["name"] = new_name
+        if description is not None:
+            payload["version"]["description"] = description
+        if status:
+            payload["version"]["status"] = status
+
+        success = True
+        if payload["version"]:
+            success = self._put(f"/versions/{version_id}.json", payload, api_key=api_key)
+
+        # Mettre à jour les tâches associées si issue_ids est spécifié
+        if issue_ids is not None:
+            # Récupérer les tâches actuellement dans la version
+            current_sprint_issues = self._get(f"/issues.json", {"project_id": project_id, "fixed_version_id": version_id, "status_id": "*", "limit": 100}, api_key=api_key)
+            current_sprint_issue_ids = {i.get("id") for i in current_sprint_issues.get("issues", [])}
+
+            # Normaliser la liste des nouveaux issue_ids
+            new_issue_ids = []
+            if isinstance(issue_ids, str):
+                try:
+                    new_issue_ids = [int(id_str.strip()) for id_str in issue_ids.split(",") if id_str.strip()]
+                except:
+                    pass
+            elif isinstance(issue_ids, list):
+                for item in issue_ids:
+                    try:
+                        new_issue_ids.append(int(item))
+                    except:
+                        pass
+
+            new_issue_ids_set = set(new_issue_ids)
+
+            # A. Retirer les tâches qui ne sont plus cochées
+            for cur_id in current_sprint_issue_ids:
+                if cur_id not in new_issue_ids_set:
+                    try:
+                        self._put(f"/issues/{cur_id}.json", {"issue": {"fixed_version_id": ""}}, api_key=api_key)
+                        logger.info(f"[Redmine] Tâche {cur_id} retirée du sprint {name}.")
+                    except Exception as e:
+                        logger.error(f"[Redmine] Erreur lors du retrait de la tâche {cur_id} du sprint {name} : {e}")
+
+            # B. Ajouter les nouvelles tâches cochées
+            for new_id in new_issue_ids_set:
+                if new_id not in current_sprint_issue_ids:
+                    try:
+                        self._put(f"/issues/{new_id}.json", {"issue": {"fixed_version_id": version_id}}, api_key=api_key)
+                        logger.info(f"[Redmine] Tâche {new_id} ajoutée au sprint {name}.")
+                    except Exception as e:
+                        logger.error(f"[Redmine] Erreur lors de l'ajout de la tâche {new_id} au sprint {name} : {e}")
+
+        if success:
+            self._invalidate_project_cache()
+            logger.info(f"[Redmine] Version '{name}' (ID: {version_id}) mise à jour avec succès.")
+        return success
 
 # Instance singleton
 redmine = RedmineClient()

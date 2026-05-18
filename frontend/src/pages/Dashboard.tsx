@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from "react"
+import React, { useState, useEffect, useCallback } from "react"
 import { Button } from "@/components/ui/button"
 import {
   LayoutDashboard,
@@ -33,23 +33,133 @@ import {
   Legend,
   CartesianGrid
 } from "recharts"
-import api from "@/api/api"
+import axios from "axios"
+import Cookies from "js-cookie"
 import { useNavigate, useParams } from "react-router-dom"
 
-export default function Dashboard() {
-  const [activeAlerts, setActiveAlerts] = useState<any[]>([]);
-  const { projectId } = useParams<{ projectId: string }>()
-  const [pid, setPid] = useState(projectId || localStorage.getItem("pm_active_project"));
+const API_BASE_URL = import.meta.env.DEV 
+  ? "http://localhost:8000/api/v1" 
+  : "/api/v1"
 
-  // Synchroniser pid avec l'URL
-  useEffect(() => {
-    if (projectId) {
-      setPid(projectId);
-      setMetrics(null); // IMPORTANT: Effacer les anciennes données
-      localStorage.setItem("pm_active_project", projectId);
-      fetchMetrics(projectId);
+const getApi = () => {
+  const token = Cookies.get("pm_chatbot_access_token")
+  const instance = axios.create({
+    baseURL: API_BASE_URL,
+    headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {})
     }
-  }, [projectId]);
+  })
+
+  instance.interceptors.response.use(
+    (response) => response,
+    (error) => {
+      const status = error.response?.status
+      if (status === 401 || status === 403) {
+        if (!window.location.pathname.includes("/login")) {
+          Cookies.remove("pm_chatbot_access_token")
+          localStorage.removeItem("pm_user")
+          localStorage.removeItem("pm_active_project")
+          localStorage.removeItem("pm_last_conv_id")
+          window.location.href = "/login?expired=true"
+        }
+      }
+      return Promise.reject(error)
+    }
+  )
+  return instance
+}
+
+interface Alert {
+  level?: string;
+  type?: string;
+  message?: string;
+}
+
+interface ProjectMetrics {
+  project_id?: string;
+  project_name?: string;
+  total_issues?: number;
+  open_issues?: number;
+  done_issues?: number;
+  overdue_issues?: number;
+  not_started?: number;
+  blocking_issues_count?: number;
+  critical_issues_count?: number;
+  active_versions?: number;
+  avg_progress?: number;
+  completion_rate?: number;
+  velocity?: number;
+  max_workload?: number;
+  total_hours?: number;
+  delayed_tasks?: number;
+  risks_count?: number;
+  overload_rate?: number;
+  time_by_user?: Record<string, number>;
+  members_detailed?: Array<{
+    name: string;
+    roles: string[];
+    priority: number;
+  }>;
+  status_distribution?: Array<{
+    name: string;
+    value: number;
+    color: string;
+  }>;
+  priority_distribution?: Array<{
+    name: string;
+    value: number;
+    color: string;
+  }>;
+  tracker_distribution?: Array<{
+    name: string;
+    value: number;
+    color?: string;
+  }>;
+  critical_issues_list?: Array<{
+    id: number;
+    subject: string;
+    priority: string;
+    status: string;
+    assigned: string;
+  }>;
+  overdue_list?: Array<{
+    id: number;
+    subject: string;
+    due_date: string;
+    assignee: string;
+    delay_days: number;
+  }>;
+  team_workload?: Array<{
+    name: string;
+    total: number;
+    urgent: number;
+    share: number;
+    is_overloaded: boolean;
+    role: string;
+  }>;
+  bottleneck_alert?: string | null;
+  progress_data?: Array<{
+    date: string;
+    percent: number;
+  }>;
+  total_estimated?: number;
+  not_started_list?: Array<{
+    id: number;
+    subject: string;
+    priority: string;
+    assignee: string;
+  }>;
+}
+
+export default function Dashboard() {
+  const [activeAlerts, setActiveAlerts] = useState<Alert[]>([]);
+  const { projectId } = useParams<{ projectId: string }>()
+  const pid = projectId || localStorage.getItem("pm_active_project") || "";
+
+  function jsonParse(str: string) {
+    try { return JSON.parse(str); } catch { return null; }
+  }
 
   // --- WebSocket pour Temps Réel ---
   useEffect(() => {
@@ -77,50 +187,50 @@ export default function Dashboard() {
     return () => socket.close();
   }, [pid]);
 
-  const jsonParse = (str: string) => {
-    try { return JSON.parse(str); } catch { return null; }
-  };
-
-  const [metrics, setMetrics] = useState<any>(null)
-  const [projectsCount, setProjectsCount] = useState(0)
+  const [metrics, setMetrics] = useState<ProjectMetrics | null>(null)
   const [loading, setLoading] = useState(false)
   const navigate = useNavigate()
 
-  useEffect(() => {
-    // Initial fetch
-    const initialPid = projectId || localStorage.getItem("pm_active_project");
-    if (initialPid) fetchMetrics(initialPid);
 
-    // Auto-refresh data every 5 seconds for Real-time feel
-    const interval = setInterval(() => {
-      const currentPid = projectId || localStorage.getItem("pm_active_project");
-      if (currentPid) fetchMetrics(currentPid);
-    }, 5000)
-
-    const userDataStr = localStorage.getItem("pm_user")
-    if (userDataStr) {
-      const userData = JSON.parse(userDataStr)
-      setProjectsCount(userData.authorized_projects?.length || 0)
-    }
-
-    return () => clearInterval(interval)
-  }, [projectId])
-
-  const fetchMetrics = async (targetPid?: string) => {
+  const fetchMetrics = useCallback(async (targetPid?: string) => {
     const activePid = targetPid || projectId || localStorage.getItem("pm_active_project")
     if (!activePid) return
     setLoading(true)
     try {
-      const res = await api.get(`/projects/${activePid}/metrics`)
+      const res = await getApi().get(`/projects/${activePid}/metrics`)
       setMetrics(res.data)
     } catch (e) {
       console.error("Erreur metrics", e)
     } finally {
       setLoading(false)
     }
-  }
+  }, [projectId]);
+
+  // Synchroniser et charger les métriques du projet actif
+  useEffect(() => {
+    if (!pid) return;
+
+    // 1. Mettre à jour localStorage
+    localStorage.setItem("pm_active_project", pid);
+
+    // 2. Charger initialement les métriques (asynchronisé pour éviter setState synchrone dans l'effet)
+    Promise.resolve().then(() => {
+      fetchMetrics(pid);
+    });
+
+    // 3. Mettre en place le rafraîchissement automatique (chaque 5 secondes)
+    const interval = setInterval(() => {
+      fetchMetrics(pid);
+    }, 5000);
+
+    return () => {
+      clearInterval(interval);
+      setMetrics(null); // IMPORTANT: Effacer les anciennes données lors du nettoyage/changement
+    };
+  }, [pid, fetchMetrics]);
 
   const handleProjectChange = (newPid: string) => {
+    setMetrics(null); // IMPORTANT: Effacer immédiatement lors d'une action utilisateur directe
     navigate(`/dashboard/${newPid}`);
   }
 
@@ -234,7 +344,7 @@ export default function Dashboard() {
                         endAngle={-270}
                         dataKey="value"
                       >
-                        <Cell fill={metrics?.overdue_issues > 3 ? '#f43f5e' : metrics?.completion_rate > 70 ? '#9ACD32' : '#f59e0b'} stroke="none" />
+                        <Cell fill={(metrics?.overdue_issues ?? 0) > 3 ? '#f43f5e' : (metrics?.completion_rate ?? 0) > 70 ? '#9ACD32' : '#f59e0b'} stroke="none" />
                         <Cell fill="rgba(255,255,255,0.05)" stroke="none" />
                       </Pie>
                     </PieChart>
@@ -245,11 +355,11 @@ export default function Dashboard() {
                 </div>
                 <div className="pr-4">
                   <div className="text-[9px] font-black text-primary uppercase tracking-widest mb-0.5">Santé Projet</div>
-                  <div className={`text-sm font-black leading-tight ${metrics?.overdue_issues > 3 ? 'text-red-500' : metrics?.completion_rate > 70 ? 'text-emerald-400' : 'text-amber-400'}`}>
-                    {metrics?.overdue_issues > 3 ? 'CRITIQUE' : metrics?.completion_rate > 70 ? 'EXCELLENTE' : 'CORRECTE'}
+                  <div className={`text-sm font-black leading-tight ${(metrics?.overdue_issues ?? 0) > 3 ? 'text-red-500' : (metrics?.completion_rate ?? 0) > 70 ? 'text-emerald-400' : 'text-amber-400'}`}>
+                    {(metrics?.overdue_issues ?? 0) > 3 ? 'CRITIQUE' : (metrics?.completion_rate ?? 0) > 70 ? 'EXCELLENTE' : 'CORRECTE'}
                   </div>
                   <div className="text-[8px] text-slate-500 font-bold uppercase tracking-tight">
-                    {metrics?.overdue_issues > 0 ? `${metrics.overdue_issues} retards détectés` : "Aucun risque majeur"}
+                    {(metrics?.overdue_issues ?? 0) > 0 ? `${metrics?.overdue_issues} retards détectés` : "Aucun risque majeur"}
                   </div>
                 </div>
               </div>
@@ -271,7 +381,7 @@ export default function Dashboard() {
                 </div>
                 <div className="text-center">
                   <div className="text-[10px] font-black text-slate-500 uppercase tracking-widest mb-1">Rôle</div>
-                  <div className="text-foreground font-bold">{isCEO ? "Accès CEO" : "Vue Manager"}</div>
+                  <div className="text-foreground font-bold">{isCEO ? "Accès CEO" : "Chef de Projet"}</div>
                 </div>
               </div>
               <Button
@@ -286,20 +396,21 @@ export default function Dashboard() {
 
           {/* Hero Section - The Big Stats */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-6">
-
             {/* Main Progress Circle Card */}
-            <div className="lg:col-span-4 bg-gradient-to-br from-primary/60 to-primary/30 backdrop-blur-3xl border border-primary/40 p-8 rounded-[40px] flex flex-col items-center justify-center text-center space-y-6 shadow-2xl group relative overflow-hidden text-white animate-fade-in-up">
-              <div className="absolute top-0 right-0 p-8 opacity-5 group-hover:opacity-10 transition-opacity">
-                <Target className="w-40 h-40" />
+            <div className="lg:col-span-4 bg-gradient-to-br from-primary/60 to-primary/30 backdrop-blur-3xl border border-primary/40 py-3 px-6 rounded-[40px] flex flex-col items-center justify-center text-center space-y-2 shadow-2xl group relative overflow-hidden text-white animate-fade-in-up">
+              <div className="absolute top-0 right-0 p-6 opacity-5 group-hover:opacity-10 transition-opacity">
+                <Target className="w-36 h-36" />
               </div>
 
               <div className="relative">
-                <div className="w-56 h-56 rounded-full border-8 border-border flex items-center justify-center shadow-[inset_0_0_50px_rgba(0,0,0,0.02)]">
+
+                <div className="w-48 h-48 rounded-full border-8 border-border flex items-center justify-center shadow-[inset_0_0_50px_rgba(0,0,0,0.02)]">
                   <div className="text-center">
-                    <div className="text-6xl font-black text-white tracking-tighter mb-1">
+                    <div className="text-5xl font-black text-white tracking-tighter mb-1">
+
                       {Math.round(metrics?.avg_progress || 0)}%
                     </div>
-                    <div className="text-[10px] font-black text-primary uppercase tracking-[0.2em]">Avancement</div>
+                    <div className="text-[12px] font-black text-primary uppercase tracking-[0.2em]">Avancement</div>
                   </div>
                   {/* SVG Progress Ring */}
                   <svg className="absolute -rotate-90 w-full h-full p-2">
@@ -317,23 +428,17 @@ export default function Dashboard() {
                 </div>
               </div>
 
-              <div className="space-y-2">
-                <h3 className="text-2xl font-black text-white tracking-tight">Objectif Projet</h3>
-                <p className="text-white/80 text-sm max-w-[200px] mx-auto font-medium leading-relaxed">
-                  Avancement global calculé sur l'ensemble des tickets actifs du projet Redmine.
+              <div className="space-y-0.1">
+
+                <p className="text-white/80 text-s max-w-[300px] mx-auto font-medium leading-relaxed">
+                  Avancement global calculé sur l'ensemble des tickets actifs du ce projet
                 </p>
               </div>
 
-              <div className="w-full h-px bg-border" />
-
-              <div className="grid grid-cols-2 w-full gap-4">
-                <div className="p-4 bg-white/5 rounded-3xl text-center">
-                  <div className="text-xl font-bold text-white">{metrics?.total_hours || 0}h</div>
-                  <div className="text-[9px] font-black text-white/70 uppercase tracking-widest">Heures Loguées</div>
-                </div>
-                <div className="p-4 bg-white/5 rounded-3xl text-center">
-                  <div className="text-xl font-bold text-white">{projectsCount}</div>
-                  <div className="text-[9px] font-black text-white/70 uppercase tracking-widest">Total Projets</div>
+              <div className="w-full flex justify-center">
+                <div className="px-4 py-1 bg-white/10 rounded-full text-center">
+                  <span className="text-[12px] font-black text-white/70 uppercase tracking-widest mr-1.5">Heures Loguées :</span>
+                  <span className="text-s font-black text-white">{metrics?.total_hours || 0}h</span>
                 </div>
               </div>
             </div>
@@ -349,7 +454,7 @@ export default function Dashboard() {
                 className="animate-fade-in-up [animation-delay:100ms]"
                 extraContent={
                   <div className="mt-4 space-y-2 max-h-[220px] overflow-y-auto pr-2 custom-scrollbar">
-                    {metrics?.members_detailed?.map((m: any, i: number) => (
+                    {metrics?.members_detailed?.map((m, i) => (
                       <div key={i} className="flex items-center justify-between gap-2 p-2 bg-muted/50 rounded-xl border border-border group/member hover:bg-muted transition-all duration-300">
                         <div className="flex items-center gap-3">
                           <div className="w-8 h-8 rounded-full bg-sky-500/20 border border-sky-500/30 flex items-center justify-center text-sky-400 font-black text-[10px]">
@@ -384,8 +489,8 @@ export default function Dashboard() {
                       <div className="text-[8px] text-white/50 font-bold uppercase tracking-tight mt-0.5">Tickets prioritaires actifs</div>
                     </div>
                     <div className={`px-3 py-1.5 rounded-xl border text-[9px] font-black uppercase tracking-wider
-                      ${(metrics?.risks_count || 0) > 0 
-                        ? 'bg-rose-500/10 border-rose-500/20 text-rose-400 animate-pulse' 
+                      ${(metrics?.risks_count || 0) > 0
+                        ? 'bg-rose-500/10 border-rose-500/20 text-rose-400 animate-pulse'
                         : 'bg-emerald-500/10 border-emerald-500/20 text-emerald-400'}`}>
                       {(metrics?.risks_count || 0) > 0 ? 'Alerte' : 'Sain'}
                     </div>
@@ -394,13 +499,32 @@ export default function Dashboard() {
               />
               <CardVisualStats
                 title="Charge Globale"
-                value={metrics?.overload_rate > 0 ? `${metrics.overload_rate}%` : (metrics?.total_issues > 0 ? "Actif" : "0%")}
+                value={(metrics?.overload_rate ?? 0) > 0 ? `${metrics?.overload_rate}%` : ((metrics?.total_issues ?? 0) > 0 ? "Actif" : "0%")}
                 icon={<Zap className="w-10 h-10" />}
                 color="yellow"
-                description={metrics?.overload_rate === 0 && metrics?.total_issues > 0
+                description={metrics?.overload_rate === 0 && (metrics?.total_issues ?? 0) > 0
                   ? "Manque de 'temps estimé' sur Redmine"
                   : "Taux de saturation des ressources"}
                 className="animate-fade-in-up [animation-delay:300ms]"
+                extraContent={
+                  <div className="mt-6 pt-6 border-t border-white/10 flex items-center justify-between">
+                    <div>
+                      <div className="text-3xl font-black text-white">
+                        {metrics?.total_estimated && metrics.total_estimated > 0
+                          ? `${Math.round(((metrics.total_hours || 0) / metrics.total_estimated) * 100)}%`
+                          : "N/A"}
+                      </div>
+                      <div className="text-[10px] text-yellow-400 font-bold uppercase tracking-widest mt-1">Précision Estimations</div>
+                      <div className="text-[8px] text-white/50 font-bold uppercase tracking-tight mt-0.5">Ratio Logué vs Estimé ({metrics?.total_estimated || 0}h)</div>
+                    </div>
+                    <div className={`px-3 py-1.5 rounded-xl border text-[9px] font-black uppercase tracking-wider
+                      ${metrics?.total_estimated && metrics.total_estimated > 0
+                        ? 'bg-yellow-500/10 border-yellow-500/20 text-yellow-400'
+                        : 'bg-slate-500/10 border-slate-500/20 text-slate-400'}`}>
+                      {metrics?.total_estimated && metrics.total_estimated > 0 ? 'Estimé' : 'Non Défini'}
+                    </div>
+                  </div>
+                }
               />
               <CardVisualStats
                 title="Progression Réelle"
@@ -507,7 +631,7 @@ export default function Dashboard() {
                       paddingAngle={8}
                       dataKey="value"
                     >
-                      {metrics?.status_distribution?.map((entry: any, index: number) => (
+                      {metrics?.status_distribution?.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
                       ))}
                     </Pie>
@@ -516,7 +640,7 @@ export default function Dashboard() {
                 </ResponsiveContainer>
               </div>
               <div className="grid grid-cols-2 gap-3 mt-6">
-                {metrics?.status_distribution?.slice(0, 4).map((entry: any, index: number) => (
+                {metrics?.status_distribution?.map((entry, index) => (
                   <div key={index} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
                     <div className="flex items-center gap-2 overflow-hidden">
                       <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
@@ -543,7 +667,7 @@ export default function Dashboard() {
                       paddingAngle={8}
                       dataKey="value"
                     >
-                      {metrics?.priority_distribution?.map((entry: any, index: number) => (
+                      {metrics?.priority_distribution?.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color} stroke="none" />
                       ))}
                     </Pie>
@@ -552,7 +676,7 @@ export default function Dashboard() {
                 </ResponsiveContainer>
               </div>
               <div className="grid grid-cols-2 gap-3 mt-6">
-                {metrics?.priority_distribution?.slice(0, 4).map((entry: any, index: number) => (
+                {metrics?.priority_distribution?.map((entry, index) => (
                   <div key={index} className="flex items-center justify-between p-3 bg-white/5 rounded-xl border border-white/5">
                     <div className="flex items-center gap-2 overflow-hidden">
                       <div className="w-2 h-2 rounded-full shrink-0" style={{ backgroundColor: entry.color }} />
@@ -593,7 +717,7 @@ export default function Dashboard() {
                       labelStyle={{ color: "#9ACD32", fontWeight: "bold" }}
                     />
                     <Bar dataKey="value" radius={[0, 10, 10, 0]} barSize={16}>
-                      {metrics?.tracker_distribution?.map((entry: any, index: number) => (
+                      {metrics?.tracker_distribution?.map((entry, index) => (
                         <Cell key={`cell-${index}`} fill={entry.color || '#3b82f6'} />
                       ))}
                     </Bar>
@@ -612,7 +736,7 @@ export default function Dashboard() {
               }))
               .sort((a, b) => b.total - a.total);
             const totalTicketsCount = metrics?.total_issues || sortedTeamWorkload.reduce((sum, u) => sum + (u.total || 0), 0);
-            
+
             return (
               <section className="space-y-6">
                 <div className="flex items-center justify-between">
@@ -638,39 +762,39 @@ export default function Dashboard() {
                         <BarChart data={sortedTeamWorkload} margin={{ top: 20, right: 10, left: 10, bottom: 30 }}>
                           <CartesianGrid strokeDasharray="3 3" stroke="rgba(255,255,255,0.1)" vertical={false} />
                           <XAxis
-                          dataKey="name"
-                          axisLine={{ stroke: 'rgba(255,255,255,0.2)', strokeWidth: 1 }}
-                          tickLine={false}
-                          tick={{ fill: '#FFFFFF', fontSize: 10, fontWeight: 'bold' }}
-                          tickFormatter={(value) => {
-                            const u = sortedTeamWorkload.find(user => user.name === value);
-                            return u ? `${value} (${u.total})` : value;
-                          }}
-                        />
-                        <YAxis
-                          axisLine={{ stroke: 'rgba(255,255,255,0.2)', strokeWidth: 1 }}
-                          tickLine={false}
-                          tick={{ fill: '#FFFFFF', fontSize: 10, fontWeight: 'bold' }}
-                        />
-                        <Tooltip
-                          cursor={{ fill: 'rgba(255,255,255,0.05)' }}
-                          contentStyle={{ backgroundColor: "#020617", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px" }}
-                        />
-                        <Legend verticalAlign="top" align="right" />
-                        <Bar name="Priorité Normale" dataKey="non_urgent" stackId="a" fill="#6366f1" radius={[0, 0, 0, 0]} barSize={40} />
-                        <Bar name="Priorité Urgente" dataKey="urgent" stackId="a" fill="#f43f5e" radius={[10, 10, 0, 0]} barSize={40} />
-                      </BarChart>
-                    </ResponsiveContainer>
+                            dataKey="name"
+                            axisLine={{ stroke: 'rgba(255,255,255,0.2)', strokeWidth: 1 }}
+                            tickLine={false}
+                            tick={{ fill: '#FFFFFF', fontSize: 10, fontWeight: 'bold' }}
+                            tickFormatter={(value) => {
+                              const u = sortedTeamWorkload.find(user => user.name === value);
+                              return u ? `${value} (${u.total})` : value;
+                            }}
+                          />
+                          <YAxis
+                            axisLine={{ stroke: 'rgba(255,255,255,0.2)', strokeWidth: 1 }}
+                            tickLine={false}
+                            tick={{ fill: '#FFFFFF', fontSize: 10, fontWeight: 'bold' }}
+                          />
+                          <Tooltip
+                            cursor={{ fill: 'rgba(255,255,255,0.05)' }}
+                            contentStyle={{ backgroundColor: "#020617", border: "1px solid rgba(255,255,255,0.1)", borderRadius: "16px" }}
+                          />
+                          <Legend verticalAlign="top" align="right" />
+                          <Bar name="Priorité Normale" dataKey="non_urgent" stackId="a" fill="#6366f1" radius={[0, 0, 0, 0]} barSize={40} />
+                          <Bar name="Priorité Urgente" dataKey="urgent" stackId="a" fill="#f43f5e" radius={[10, 10, 0, 0]} barSize={40} />
+                        </BarChart>
+                      </ResponsiveContainer>
+                    </div>
                   </div>
-                </div>
 
                   {/* Rappel Visuel des Membres Surchargés */}
                   <div className="lg:col-span-1 h-[400px] flex flex-col">
                     <div className="space-y-4 flex-1 overflow-y-auto pr-1 scrollbar-thin h-full">
                       {(() => {
-                        const overloadedMembers = sortedTeamWorkload.filter((u: any) => u.is_overloaded || (u.urgent || 0) > 1);
+                        const overloadedMembers = sortedTeamWorkload.filter((u) => u.is_overloaded || (u.urgent || 0) > 1);
                         if (overloadedMembers.length > 0) {
-                          return overloadedMembers.map((user: any, i: number) => (
+                          return overloadedMembers.map((user, i) => (
                             <div key={i} className="p-6 bg-red-500/10 border border-red-500/20 rounded-3xl flex items-center justify-between group hover:bg-red-500/20 transition-all">
                               <div className="flex items-center gap-4">
                                 <div className="w-12 h-12 rounded-2xl bg-red-500 flex items-center justify-center text-white shadow-lg shadow-red-500/40">
@@ -698,21 +822,21 @@ export default function Dashboard() {
                   </div>
                 </div>
 
-                                {/* ── TOP CONTRIBUTEURS (BONUS) ── */}
-                <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 pt-10">
-                  <div className="md:col-span-2 lg:col-span-4 flex items-center gap-3 mb-2">
+                {/* ── TOP CONTRIBUTEURS (BONUS) ── */}
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-10">
+                  <div className="md:col-span-3 flex items-center gap-3 mb-2">
                     <Sparkles className="w-5 h-5 text-yellow-400 animate-pulse" />
                     <h2 className="text-xl font-black text-white uppercase tracking-tighter">Élite du Projet</h2>
                   </div>
 
-                  {sortedTeamWorkload.slice(0, 4).map((user: any, i: number) => (
+                  {sortedTeamWorkload.slice(0, 3).map((user, i) => (
                     <div key={i} className="relative group overflow-hidden p-6 bg-white/5 backdrop-blur-2xl border border-white/10 rounded-[32px] hover:-translate-y-2 transition-all duration-500">
                       {/* Badge de Rang */}
                       <div className={`absolute -top-2 -right-2 w-12 h-12 flex items-center justify-center rounded-full shadow-2xl z-10 
                           ${i === 0 ? 'bg-gradient-to-br from-yellow-300 to-yellow-600' :
                           i === 1 ? 'bg-gradient-to-br from-slate-300 to-slate-500' :
-                          i === 2 ? 'bg-gradient-to-br from-orange-400 to-orange-700' :
-                            'bg-gradient-to-br from-teal-400 to-emerald-600'}`}>
+                            i === 2 ? 'bg-gradient-to-br from-orange-400 to-orange-700' :
+                              'bg-gradient-to-br from-teal-400 to-emerald-600'}`}>
                         <span className="text-white font-black text-lg">{i + 1}</span>
                       </div>
 
@@ -723,12 +847,7 @@ export default function Dashboard() {
                         <div>
                           <div className="text-lg font-black text-white">{user.name} <span className="text-sm font-bold text-slate-400">({user.total})</span></div>
                           <div className="text-[10px] text-primary font-bold uppercase tracking-widest">
-                            {user.role || (
-                              i === 0 ? 'Leader Performance' : 
-                              i === 1 ? 'Expert Technique' : 
-                              i === 2 ? 'Soutien Actif' : 
-                              'Collaborateur Clé'
-                            )}
+                            {user.role}
                           </div>
                         </div>
                       </div>
@@ -736,7 +855,7 @@ export default function Dashboard() {
                       <div className="mt-6 pt-6 border-t border-white/5 flex justify-between items-end">
                         <div>
                           <div className="text-[10px] text-slate-500 font-bold uppercase tracking-widest mb-1">Impact Projet</div>
-                          <div className="text-2xl font-black text-white">{Math.round((user.total / (metrics.total_issues || 1)) * 100)}%</div>
+                          <div className="text-2xl font-black text-white">{Math.round((user.total / (metrics?.total_issues || 1)) * 100)}%</div>
                         </div>
                         <div className="flex gap-1">
                           {[1, 2, 3, 4, 5].map((s) => (
@@ -754,44 +873,96 @@ export default function Dashboard() {
 
           {/* ── LISTE DES TÂCHES CRITIQUES ── */}
 
-          {/* Critical Tasks Table */}
-          <div className="bg-white/[0.02] backdrop-blur-2xl border border-white/5 p-6 md:p-8 rounded-[32px] space-y-6">
-            <div className="flex items-center justify-between">
-              <div className="space-y-1">
-                <h3 className="text-2xl font-black text-foreground tracking-tight flex items-center gap-3">
-                  Tâches les Plus Graves
-                  <div className="px-3 py-1 bg-rose-500/10 border border-rose-500/20 rounded-full">
-                    <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest">Alerte Critique</span>
-                  </div>
-                </h3>
-                <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Points de blocage nécessitant une attention immédiate</p>
+          {/* ── LISTES DÉTAILLÉES (CRITIQUES & NON COMMENCÉES) ── */}
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-10">
+            {/* Critical Tasks Table */}
+            <div className="bg-white/[0.02] backdrop-blur-2xl border border-white/5 p-6 md:p-8 rounded-[32px] space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <h3 className="text-2xl font-black text-foreground tracking-tight flex items-center gap-3">
+                    Tâches les Plus Graves
+                    <div className="px-3 py-1 bg-rose-500/10 border border-rose-500/20 rounded-full">
+                      <span className="text-[10px] font-black text-rose-500 uppercase tracking-widest">Alerte Critique</span>
+                    </div>
+                  </h3>
+                  <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Points de blocage nécessitant une attention immédiate</p>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-white/5">
+                      <th className="pb-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Ticket</th>
+                      <th className="pb-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Priorité</th>
+                      <th className="pb-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Assigné à</th>
+                    </tr>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {metrics?.critical_issues_list?.map((issue) => (
+                      <tr key={issue.id} className="group hover:bg-white/[0.02] transition-colors">
+                        <td className="py-4">
+                          <span className="text-sm font-bold text-foreground group-hover:text-primary">#{issue.id} - {issue.subject}</span>
+                        </td>
+                        <td className="py-4">
+                          <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${issue.priority === 'Urgent' || issue.priority === 'Immédiat' ? 'bg-red-500 text-white' : 'bg-white/10 text-slate-400'}`}>
+                            {issue.priority}
+                          </span>
+                        </td>
+                        <td className="py-4 text-xs text-slate-400 font-bold">{issue.assigned}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </div>
-            <div className="overflow-x-auto">
-              <table className="w-full text-left">
-                <thead>
-                  <tr className="border-b border-white/5">
-                    <th className="pb-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Ticket</th>
-                    <th className="pb-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Priorité</th>
-                    <th className="pb-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Assigné à</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                  {metrics?.critical_issues_list?.map((issue: any) => (
-                    <tr key={issue.id} className="group hover:bg-white/[0.02] transition-colors">
-                      <td className="py-4">
-                        <span className="text-sm font-bold text-foreground group-hover:text-primary">#{issue.id} - {issue.subject}</span>
-                      </td>
-                      <td className="py-4">
-                        <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${issue.priority === 'Urgent' || issue.priority === 'Immédiat' ? 'bg-red-500 text-white' : 'bg-white/10 text-slate-400'}`}>
-                          {issue.priority}
-                        </span>
-                      </td>
-                      <td className="py-4 text-xs text-slate-400 font-bold">{issue.assigned}</td>
+
+            {/* Not Started Tasks Table */}
+            <div className="bg-white/[0.02] backdrop-blur-2xl border border-white/5 p-6 md:p-8 rounded-[32px] space-y-6">
+              <div className="flex items-center justify-between">
+                <div className="space-y-1">
+                  <h3 className="text-2xl font-black text-foreground tracking-tight flex items-center gap-3">
+                    Tâches Non Commencées
+                    <div className="px-3 py-1 bg-amber-500/10 border border-amber-500/20 rounded-full">
+                      <span className="text-[10px] font-black text-amber-500 uppercase tracking-widest">En Sommeil</span>
+                    </div>
+                  </h3>
+                  <p className="text-xs text-slate-500 font-bold uppercase tracking-widest">Tâches en attente avec 0% d'avancement</p>
+                </div>
+              </div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-left">
+                  <thead>
+                    <tr className="border-b border-white/5">
+                      <th className="pb-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Ticket</th>
+                      <th className="pb-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Priorité</th>
+                      <th className="pb-4 text-[10px] font-black text-slate-500 uppercase tracking-widest">Assigné à</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-white/5">
+                    {metrics?.not_started_list && metrics.not_started_list.length > 0 ? (
+                      metrics.not_started_list.map((issue) => (
+                        <tr key={issue.id} className="group hover:bg-white/[0.02] transition-colors">
+                          <td className="py-4">
+                            <span className="text-sm font-bold text-foreground group-hover:text-primary">#{issue.id} - {issue.subject}</span>
+                          </td>
+                          <td className="py-4">
+                            <span className={`px-2 py-0.5 rounded text-[10px] font-black uppercase ${issue.priority === 'Urgent' || issue.priority === 'Immédiat' ? 'bg-red-500 text-white' : 'bg-white/10 text-slate-400'}`}>
+                              {issue.priority}
+                            </span>
+                          </td>
+                          <td className="py-4 text-xs text-slate-400 font-bold">{issue.assignee}</td>
+                        </tr>
+                      ))
+                    ) : (
+                      <tr>
+                        <td colSpan={3} className="py-8 text-center text-xs text-slate-500 font-bold">
+                          Aucune tâche en sommeil sur ce projet ! 🎉
+                        </td>
+                      </tr>
+                    )}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
 
@@ -844,9 +1015,9 @@ export default function Dashboard() {
 
                   {[
                     {
-                      text: metrics?.overdue_issues > 0 ? `Réassigner les ${metrics.overdue_issues} tâches en retard pour débloquer le flux.` : "Maintenir le rythme actuel, aucune congestion détectée.",
+                      text: (metrics?.overdue_issues ?? 0) > 0 ? `Réassigner les ${metrics?.overdue_issues} tâches en retard pour débloquer le flux.` : "Maintenir le rythme actuel, aucune congestion détectée.",
                       icon: <Activity className="w-4 h-4 text-emerald-400" />,
-                      status: metrics?.overdue_issues > 0 ? "Priorité Haute" : "Optimisation"
+                      status: (metrics?.overdue_issues ?? 0) > 0 ? "Priorité Haute" : "Optimisation"
                     },
                     {
                       text: metrics?.bottleneck_alert ? "Rééquilibrer la charge de travail pour éviter le burn-out d'un membre." : "La répartition de l'équipe est saine et équilibrée.",
@@ -854,9 +1025,9 @@ export default function Dashboard() {
                       status: metrics?.bottleneck_alert ? "Alerte RH" : "Sain"
                     },
                     {
-                      text: metrics?.completion_rate < 50 ? "Planifier un point d'étape urgent pour accélérer la livraison." : "Le projet est sur la bonne voie pour le prochain jalon.",
+                      text: (metrics?.completion_rate ?? 0) < 50 ? "Planifier un point d'étape urgent pour accélérer la livraison." : "Le projet est sur la bonne voie pour le prochain jalon.",
                       icon: <TrendingUp className="w-4 h-4 text-purple-400" />,
-                      status: metrics?.completion_rate < 50 ? "Stratégique" : "Stable"
+                      status: (metrics?.completion_rate ?? 0) < 50 ? "Stratégique" : "Stable"
                     }
                   ].map((insight, idx) => (
                     <div key={idx} className="p-4 bg-white/5 border border-white/5 rounded-2xl flex items-start gap-4 hover:bg-white/[0.08] transition-all group">
@@ -879,8 +1050,18 @@ export default function Dashboard() {
   )
 }
 
-function CardVisualStats({ title, value, icon, color, description, extraContent, className }: any) {
-  const colorStyles: any = {
+interface CardVisualStatsProps {
+  title: string;
+  value: string | number;
+  icon: React.ReactNode;
+  color: 'primary' | 'emerald' | 'rose' | 'blue' | 'yellow';
+  description: string;
+  extraContent?: React.ReactNode;
+  className?: string;
+}
+
+function CardVisualStats({ title, value, icon, color, description, extraContent, className }: CardVisualStatsProps) {
+  const colorStyles: Record<string, string> = {
     primary: "from-primary/50 to-primary/20 text-white border-primary/40",
     emerald: "from-emerald-600/50 to-emerald-600/20 text-white border-emerald-500/40",
     rose: "from-rose-600/50 to-rose-600/20 text-white border-rose-500/40",
@@ -892,7 +1073,7 @@ function CardVisualStats({ title, value, icon, color, description, extraContent,
     <div className={`bg-gradient-to-br ${colorStyles[color]} backdrop-blur-2xl border p-8 rounded-[40px] space-y-6 hover:-translate-y-2 transition-all duration-500 group relative overflow-hidden shadow-2xl ${className}`}>
       <div className="flex items-start justify-between relative z-10">
         <div className="p-4 bg-white/10 rounded-2xl border border-white/10 shadow-inner group-hover:bg-white/20 transition-all">
-          {React.cloneElement(icon as React.ReactElement<any>, { className: "w-8 h-8", strokeWidth: 2.5 })}
+          {React.cloneElement(icon as React.ReactElement<{ className?: string; strokeWidth?: number }>, { className: "w-8 h-8", strokeWidth: 2.5 })}
         </div>
         <div className="flex flex-col items-end gap-1">
           <div className="flex items-center gap-1.5 px-2 py-1 bg-white/5 rounded-lg border border-white/5">

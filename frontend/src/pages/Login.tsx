@@ -3,9 +3,13 @@ import { useNavigate } from "react-router-dom"
 import { Button } from "@/components/ui/button"
 import { Input } from "@/components/ui/input"
 import { Loader2, Lock, User, ShieldCheck, Eye, EyeOff } from "lucide-react"
-import api from "@/api/api"
+import axios from "axios"
 import Cookies from "js-cookie"
 import { toast } from "sonner"
+
+const API_BASE_URL = import.meta.env.DEV 
+  ? "http://localhost:8000/api/v1" 
+  : "/api/v1"
 
 export default function Login() {
   const [login, setLogin] = useState("")
@@ -16,6 +20,13 @@ export default function Login() {
 
   // Redirection si déjà connecté
   useEffect(() => {
+    const params = new URLSearchParams(window.location.search)
+    if (params.get("expired")) {
+      toast.error("Votre session a expiré ou est invalide. Veuillez vous reconnecter.")
+      // Nettoyer l'URL sans rafraîchir
+      window.history.replaceState({}, document.title, window.location.pathname)
+    }
+
     const token = Cookies.get("pm_chatbot_access_token")
     if (token) {
       navigate("/chat")
@@ -31,16 +42,16 @@ export default function Login() {
 
     setLoading(true)
     try {
-      const response = await api.post("/auth/login", { login, password })
-      
+      const response = await axios.post(`${API_BASE_URL}/auth/login`, { login, password })
+
       const { access_token, user } = response.data
-      
+
       // Stockage sécurisé
-     
-      Cookies.set("pm_chatbot_access_token", access_token, { expires: 1/24 }) // 1h
+
+      Cookies.set("pm_chatbot_access_token", access_token, { expires: 7 }) // 7 jours
       localStorage.removeItem("pm_last_conv_id") // Reset chat pour le nouvel utilisateur
       localStorage.setItem("pm_user", JSON.stringify(user))
-      
+
       if (user.authorized_projects?.length > 0) {
         localStorage.setItem("pm_active_project", user.authorized_projects[0].identifier)
       } else {
@@ -49,11 +60,15 @@ export default function Login() {
 
       toast.success(`Bienvenue, ${user.firstname} !`)
       navigate("/chat")
-    } catch (err: any) {
-      const status = err.response?.status
-      if (status === 401) toast.error("Identifiant ou mot de passe incorrect.")
-      else if (status === 403) toast.error(err.response?.data?.detail || "Accès réservé.")
-      else toast.error("Erreur de connexion au serveur.")
+    } catch (err) {
+      if (axios.isAxiosError(err)) {
+        const status = err.response?.status
+        if (status === 401) toast.error("Identifiant ou mot de passe incorrect.")
+        else if (status === 403) toast.error(err.response?.data?.detail || "Accès réservé.")
+        else toast.error("Erreur de connexion au serveur.")
+      } else {
+        toast.error("Erreur de connexion au serveur.")
+      }
     } finally {
       setLoading(false)
     }
@@ -144,7 +159,7 @@ export default function Login() {
         <div className="bg-primary/5 border border-primary/15 rounded-2xl p-3 text-center space-y-1 animate-fade-in [animation-delay:200ms]">
           <div className="flex items-center justify-center gap-2 text-[12px] font-bold text-slate-400 uppercase tracking-wider">
             <ShieldCheck className="w-3 h-3 text-indigo-100" strokeWidth={2.5} />
-             Accés seulement aux Chefs de projet & CEO
+            Accés seulement aux Chefs de projet & CEO
           </div>
           <p className="text-[12px] text-slate-400 font-medium">
             PFE/2026 — Hergli Youssef

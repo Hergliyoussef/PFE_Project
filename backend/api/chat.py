@@ -266,7 +266,7 @@ async def get_permanent_history(
     
     if conversation_id:
         # Vérifier que la conversation appartient à l'utilisateur
-        conv = db.query(DBConv).filter(DBConv.id == conversation_id, DBConv.username == user_id_str).first()
+        conv = db.query(DBConv).filter(DBConv.id == conversation_id, DBConv.username.ilike(user_id_str)).first()
         if not conv:
             raise HTTPException(status_code=404, detail="Conversation non trouvée ou non autorisée")
         conv_id = conversation_id
@@ -274,7 +274,7 @@ async def get_permanent_history(
         # On cherche la dernière discussion de l'utilisateur pour ce projet
         last_conv = (
             db.query(DBConv)
-            .filter(DBConv.username == user_id_str)
+            .filter(DBConv.username.ilike(user_id_str))
             .filter(DBConv.id.like(f"conv_%_{project_id}_%"))
             .order_by(DBConv.created_at.desc())
             .first()
@@ -445,7 +445,7 @@ def _get_display_data(display_type: str, project_id: str) -> dict:
                         "identifier": p["identifier"],
                         "progress": m["avg_progress"],
                         "overdue_issues": m["overdue_issues"],
-                        "critical_issues": m["critical_issues"]
+                        "critical_issues": m.get("critical_issues_count", 0)
                     })
                 except: continue
             return {"projects": sorted(results, key=lambda x: x["overdue_issues"], reverse=True)}
@@ -512,6 +512,86 @@ async def delete_single_alert(
     except Exception as e:
         logger.error(f"[Alerts] Erreur suppression : {e}")
         return {"success": False}
+
+
+@router.get("/projects/{project_id}/sprint-tasks")
+async def get_sprint_tasks_endpoint(
+    project_id: str,
+    sprint_name: str,
+    current_user: dict = Depends(require_authorized_role)
+):
+    # Set Redmine context
+    redmine_api_key_ctx.set(current_user.get("api_key"))
+    redmine_user_login_ctx.set(current_user.get("sub"))
+    
+    try:
+        # 1. Obtenir l'ID du sprint par son nom
+        sprint_id = redmine.get_version_id_by_name(project_id, sprint_name)
+        
+        # 2. Obtenir toutes les tâches ouvertes du projet
+        all_issues = redmine.get_issues(project_id, status="open")
+        
+        # 3. Obtenir toutes les tâches (même fermées si besoin) du sprint spécifique
+        sprint_issues = []
+        if sprint_id:
+            sprint_issues_data = redmine._get(f"/issues.json", {"project_id": project_id, "fixed_version_id": sprint_id, "status_id": "*", "limit": 100})
+            sprint_issues = sprint_issues_data.get("issues", [])
+        
+        # Construire la liste des tâches du projet
+        tasks = []
+        seen_ids = set()
+        
+        # Ajouter d'abord les tâches du sprint (au cas où certaines sont fermées)
+        for issue in sprint_issues:
+            if issue.get("id") not in seen_ids:
+                status_val = issue.get("status")
+                status_name = "Nouveau"
+                if isinstance(status_val, dict):
+                    status_name = status_val.get("name", "Nouveau")
+                elif isinstance(status_val, str):
+                    status_name = status_val
+
+                tasks.append({
+                    "id": issue.get("id"),
+                    "subject": issue.get("subject"),
+                    "status": status_name,
+                    "in_sprint": True
+                })
+                seen_ids.add(issue.get("id"))
+                
+        # Ajouter les autres tâches ouvertes du projet
+        for issue in all_issues:
+            if issue.get("id") not in seen_ids:
+                status_val = issue.get("status")
+                status_name = "Nouveau"
+                if isinstance(status_val, dict):
+                    status_name = status_val.get("name", "Nouveau")
+                elif isinstance(status_val, str):
+                    status_name = status_val
+
+                fv = issue.get("fixed_version")
+                other_sprint = None
+                if isinstance(fv, dict):
+                    other_sprint = fv.get("name")
+                elif isinstance(fv, str):
+                    other_sprint = fv
+
+                tasks.append({
+                    "id": issue.get("id"),
+                    "subject": issue.get("subject"),
+                    "status": status_name,
+                    "in_sprint": False,
+                    "other_sprint": other_sprint
+                })
+                seen_ids.add(issue.get("id"))
+                
+        return {
+            "sprint_id": sprint_id,
+            "tasks": tasks
+        }
+    except Exception as e:
+        logger.error(f"[Sprint Tasks] Erreur : {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 @router.delete("/alerts/{project_id}")
@@ -600,7 +680,9 @@ async def get_project_metrics(
             "team_workload":   computed.get("team_workload", []),
             "bottleneck_alert": computed.get("bottleneck_alert"),
             "members_detailed": computed.get("members_detailed", []),
-            "overdue_issues":  computed.get("overdue_issues", 0)
+            "overdue_issues":  computed.get("overdue_issues", 0),
+            "total_estimated": computed.get("total_estimated", 0),
+            "not_started_list": computed.get("not_started_list", [])
         }
     except Exception as e:
         logger.error(f"[Metrics] Erreur critique pour {project_id}: {e}")
@@ -616,7 +698,7 @@ async def list_conversations(
     user_id_str = current_user.get("sub")
     conversations = (
         db.query(DBConv)
-        .filter(DBConv.username == user_id_str)
+        .filter(DBConv.username.ilike(user_id_str))
         .order_by(DBConv.created_at.desc())
         .all()
     )
@@ -656,7 +738,7 @@ async def delete_conversation(
     user_id_str = current_user.get("sub")
     
     # Vérifier que la conversation appartient bien à l'utilisateur
-    conv = db.query(DBConv).filter(DBConv.id == conversation_id, DBConv.username == user_id_str).first()
+    conv = db.query(DBConv).filter(DBConv.id == conversation_id, DBConv.username.ilike(user_id_str)).first()
     if not conv:
         raise HTTPException(status_code=404, detail="Conversation non trouvée ou non autorisée")
     

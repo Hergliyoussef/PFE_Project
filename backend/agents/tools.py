@@ -178,6 +178,52 @@ def classify_risk(project_id: str) -> str:
         return json.dumps({"error": str(e)})
 
 @tool
+def get_project_issues(project_id: str, status: str = "open") -> str:
+    """Liste les tickets (tâches) d'un projet avec la possibilité de filtrer par statut.
+    'status' peut être 'open' (tous les tickets ouverts), 'closed' (fermés), '*' (tous), ou un nom de statut spécifique (ex: 'Nouveau', 'En cours', 'Résolu', 'Fermé').
+    IMPORTANT : 'project_id' doit être l'identifiant technique (slug).
+    """
+    try:
+        import logging
+        logger = logging.getLogger(__name__)
+        
+        status_param = status
+        normalized_status = str(status).lower().strip()
+        
+        if normalized_status not in ["open", "closed", "*"]:
+            try:
+                data = redmine._get("/issue_statuses.json")
+                statuses = data.get("issue_statuses", [])
+                found = False
+                for s in statuses:
+                    if s.get("name", "").lower().strip() == normalized_status:
+                        status_param = str(s["id"])
+                        found = True
+                        break
+                if not found:
+                    for s in statuses:
+                        if normalized_status in s.get("name", "").lower().strip():
+                            status_param = str(s["id"])
+                            found = True
+                            break
+            except Exception as exc:
+                logger.error(f"Erreur lors de la récupération des statuts : {exc}")
+                
+        issues = redmine.get_issues(project_id, status=status_param)
+        result = [{
+            "id": i["id"],
+            "subject": i["subject"],
+            "status": i.get("status"),
+            "assignee": i.get("assigned") or "Non assigné",
+            "priority": i.get("priority") or "Normal",
+            "progress": i.get("done_ratio", 0),
+            "due_date": i.get("due_date")
+        } for i in issues]
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+@tool
 def get_all_projects_status() -> str:
     """Retourne l'état de TOUS les projets : avancement, retards, et alertes."""
     try:
@@ -193,7 +239,7 @@ def get_all_projects_status() -> str:
                     "name": p["name"],
                     "progress": m["avg_progress"],
                     "overdue_issues": m["overdue_issues"],
-                    "critical_issues": m["critical_issues"]
+                    "critical_issues": m.get("critical_issues_count", 0)
                 })
             except Exception:
                 continue
@@ -230,14 +276,104 @@ def delete_project_conversations(project_id: str, user_id: int) -> str:
     finally:
         db.close()
 
+
+@tool
+def get_sprint_status(project_id: str) -> str:
+    """Retourne l'état d'avancement de chaque sprint/version du projet,
+    avec le nombre de tâches totales, fermées, et ouvertes pour chaque sprint.
+    IMPORTANT : 'project_id' doit être l'identifiant technique (slug).
+    """
+    try:
+        versions = redmine.get_versions(project_id)
+        issues = redmine.get_issues(project_id, status="*")
+        
+        closed_ids = redmine.get_closed_status_ids()
+        def is_issue_closed(i):
+            s_id = i.get("status_id")
+            if s_id in closed_ids: return True
+            name = str(i.get("status", "")).lower()
+            return any(x in name for x in ["clos", "fermé", "resolv", "résolu", "termin", "rejet", "fini"])
+
+        result = []
+        for v in versions:
+            v_issues = [i for i in issues if i.get("fixed_version", {}).get("id") == v["id"]]
+            total = len(v_issues)
+            closed = len([i for i in v_issues if is_issue_closed(i)])
+            opened = total - closed
+            
+            # Calcul de la progression moyenne
+            avg_progress = 0.0
+            if total > 0:
+                progress_sum = sum(100 if is_issue_closed(i) else i.get("done_ratio", 0) for i in v_issues)
+                avg_progress = round(progress_sum / total, 1)
+            else:
+                if v["status"] == "closed":
+                    avg_progress = 100.0
+            
+            result.append({
+                "id": v["id"],
+                "name": v["name"],
+                "status": v["status"],
+                "due_date": v.get("due_date"),
+                "description": v.get("description", ""),
+                "total_tasks": total,
+                "closed_tasks": closed,
+                "open_tasks": opened,
+                "progress": avg_progress
+            })
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def get_team_workload(project_id: str) -> str:
+    """Retourne la répartition de la charge de travail et la surcharge par membre de l'équipe du projet.
+    IMPORTANT : 'project_id' doit être l'identifiant technique (slug).
+    """
+    try:
+        metrics = redmine.compute_project_metrics(project_id)
+        result = {
+            "workload": metrics.get("team_workload", []),
+            "bottleneck_alert": metrics.get("bottleneck_alert", "")
+        }
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
+@tool
+def get_not_started_issues(project_id: str) -> str:
+    """Liste les tâches du projet qui n'ont pas encore commencé (progression à 0%).
+    IMPORTANT : 'project_id' doit être l'identifiant technique (slug).
+    """
+    try:
+        issues = redmine.get_not_started_issues(project_id)
+        result = [{
+            "id": i["id"],
+            "subject": i["subject"],
+            "assignee": i.get("assigned_to", {}).get("name", "Non assigné"),
+            "priority": i.get("priority", {}).get("name", ""),
+            "due_date": i.get("due_date")
+        } for i in issues]
+        return json.dumps(result, ensure_ascii=False, indent=2)
+    except Exception as e:
+        return json.dumps({"error": str(e)})
+
+
 ALL_TOOLS = [
     get_project_metrics, get_overdue_issues, get_critical_path,
     get_velocity_trend, get_member_performance, classify_risk,
-    delete_project_conversations, get_all_projects_status
+    delete_project_conversations, get_all_projects_status, get_project_issues,
+    get_sprint_status, get_team_workload, get_not_started_issues
 ]
 
 ANALYSE_TOOLS = ALL_TOOLS
-DECISION_TOOLS = [get_critical_path, get_velocity_trend, classify_risk, get_member_performance]
+DECISION_TOOLS = [get_critical_path, get_velocity_trend, classify_risk, get_member_performance, get_sprint_status, get_team_workload]
 
 # Liste pour l'agent Rapporteur (Synthèse et métriques)
-RAPPORTEUR_TOOLS = [get_project_metrics, get_overdue_issues, get_velocity_trend, classify_risk, delete_project_conversations, get_all_projects_status]
+RAPPORTEUR_TOOLS = [
+    get_project_metrics, get_overdue_issues, get_velocity_trend, classify_risk,
+    delete_project_conversations, get_all_projects_status, get_project_issues,
+    get_sprint_status, get_team_workload, get_not_started_issues
+]

@@ -13,6 +13,10 @@ class Settings(BaseSettings):
     # ── Groq ──────────────────────────────────────────────────
     groq_api_key: str = ""
 
+    # ── Local LLM (Société / Ollama) ──────────────────────────
+    local_llm_url:   str = "http://192.168.130.177:11434/v1"
+    local_llm_model: str = "gemma4:26b"
+
     # ── Modèles par agent ─────────────────────────────────────
     # Déclarés vides par défaut pour forcer leur lecture exclusive depuis le .env
     llm_supervisor:  str = ""
@@ -37,11 +41,6 @@ class Settings(BaseSettings):
     app_name:   str  = "PM Assistant"
     secret_key: str  = "dev_default_secret_key_change_me_in_env"
     debug:      bool = True
-
-    # ── Langfuse ──────────────────────────────────────────────
-    langfuse_public_key: str = ""
-    langfuse_secret_key: str = ""
-    langfuse_base_url:   str = "https://cloud.langfuse.com"
 
     class Config:
         from pathlib import Path

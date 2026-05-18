@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 
 # ── Configuration JWT ─────────────────────────────────────────
 ALGORITHM          = "HS256"
-ACCESS_TOKEN_EXPIRE_MINUTES  = 60        # 1 heure
+ACCESS_TOKEN_EXPIRE_MINUTES  = 60 * 24 * 7  # 7 jours (10080 minutes)
 REFRESH_TOKEN_EXPIRE_DAYS    = 7         # 7 jours
 
 # ── Schéma Bearer Token ───────────────────────────────────────

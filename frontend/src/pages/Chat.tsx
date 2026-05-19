@@ -807,7 +807,53 @@ export default function Chat() {
                           </div>
 
                           <div className="space-y-6">
-                            {(msg.data.actions || [{ action_type: msg.data.action_type, parameters: msg.data.parameters, description: msg.data.description || msg.data.summary }]).map((action: any, idx: number) => (
+                            {(msg.data.actions || [{ action_type: msg.data.action_type, parameters: msg.data.parameters, description: msg.data.description || msg.data.summary }])
+                              .map((rawAction: any) => {
+                                const action = rawAction; // Mutate original reference to preserve changes for handleTaskExecution
+                                if (action.parameters) {
+                                  if (action.action_type === 'create_issue') {
+                                    const defaultParams: any = {
+                                      subject: '',
+                                      description: '',
+                                      tracker_id: null,
+                                      status_id: null,
+                                      priority_id: null,
+                                      user_id: '',
+                                      fixed_version: '',
+                                      estimated_hours: '',
+                                      start_date: (() => {
+                                        const d = new Date();
+                                        return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+                                      })(),
+                                      due_date: ''
+                                    };
+                                    for (const [k, v] of Object.entries(defaultParams)) {
+                                      if (action.parameters[k] === undefined || action.parameters[k] === null) {
+                                        action.parameters[k] = v;
+                                      }
+                                    }
+                                  } else if (action.action_type === 'update_issue') {
+                                    const defaultParams: any = {
+                                      issue_id: '',
+                                      notes: '',
+                                      status_id: null,
+                                      priority_id: null,
+                                      user_id: '',
+                                      estimated_hours: '',
+                                      done_ratio: null,
+                                      start_date: '',
+                                      due_date: ''
+                                    };
+                                    for (const [k, v] of Object.entries(defaultParams)) {
+                                      if (action.parameters[k] === undefined || action.parameters[k] === null) {
+                                        action.parameters[k] = v;
+                                      }
+                                    }
+                                  }
+                                }
+                                return action;
+                              })
+                              .map((action: any, idx: number) => (
                               <div key={idx} className={`p-4 bg-white/5 rounded-xl border ${action.action_type.startsWith('delete') ? 'border-red-500/30 bg-red-500/5' : 'border-white/5'}`}>
                                 <div className="flex items-center gap-2 mb-3">
                                   {action.action_type.startsWith('delete') && <XCircle className="w-3.5 h-3.5 text-red-500" />}
@@ -1323,21 +1369,12 @@ export default function Chat() {
                                       }
 
                                       if (key === 'estimated_hours') {
-                                        if (isMissing) {
-                                          return (
-                                            <div key={key} className="flex flex-col">
-                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Temps estimé (h) <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
-                                              <input type="number" step="0.5" min="0" placeholder="Ex: 2.5" className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50" onChange={(e) => { action.parameters[key] = e.target.value; }} />
-                                            </div>
-                                          )
-                                        } else {
-                                          return (
-                                            <div key={key} className="flex flex-col">
-                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Temps estimé</span>
-                                              <input type="text" readOnly defaultValue={`${value} heures`} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
-                                            </div>
-                                          )
-                                        }
+                                        return (
+                                          <div key={key} className="flex flex-col">
+                                            <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Temps estimé (h) <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
+                                            <input type="number" step="0.5" min="0" placeholder="Ex: 2.5" defaultValue={isMissing ? '' : String(value)} className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50" onChange={(e) => { action.parameters[key] = e.target.value; }} />
+                                          </div>
+                                        )
                                       }
 
                                       if (key === 'done_ratio') {
@@ -1367,21 +1404,30 @@ export default function Chat() {
                                       }
 
                                       if (key === 'fixed_version') {
-                                        if (isMissing) {
-                                          return (
-                                            <div key={key} className="flex flex-col">
-                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Sprint / Version <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
-                                              <input type="text" placeholder="Ex: s.4" className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50" onChange={(e) => { action.parameters[key] = e.target.value; }} />
-                                            </div>
-                                          )
-                                        } else {
-                                          return (
-                                            <div key={key} className="flex flex-col">
-                                              <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1">Sprint / Version</span>
-                                              <input type="text" readOnly defaultValue={String(value)} className="bg-slate-900/30 border border-white/5 rounded-lg px-3 py-1.5 text-xs text-slate-400 focus:outline-none" />
-                                            </div>
-                                          )
-                                        }
+                                        return (
+                                          <div key={key} className="flex flex-col">
+                                            <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Sprint / Version <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
+                                            <input type="text" placeholder="Ex: s.4" defaultValue={isMissing ? '' : String(value)} className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50" onChange={(e) => { action.parameters[key] = e.target.value; }} />
+                                          </div>
+                                        )
+                                      }
+
+                                      if (key === 'start_date') {
+                                        return (
+                                          <div key={key} className="flex flex-col">
+                                            <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Début <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
+                                            <input type="date" defaultValue={isMissing ? '' : String(value)} className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50 w-full" onChange={(e) => { action.parameters[key] = e.target.value; }} />
+                                          </div>
+                                        )
+                                      }
+
+                                      if (key === 'due_date') {
+                                        return (
+                                          <div key={key} className="flex flex-col">
+                                            <span className="text-[9px] text-slate-500 uppercase tracking-wider mb-1 flex items-center gap-2">Échéance <span className="px-1.5 py-0.5 rounded text-[8px] bg-amber-500/20 text-amber-400">Optionnel</span></span>
+                                            <input type="date" defaultValue={isMissing ? '' : String(value)} className="bg-slate-900/50 border border-white/10 rounded-lg px-3 py-1.5 text-xs text-white focus:outline-none focus:border-primary/50 w-full" onChange={(e) => { action.parameters[key] = e.target.value; }} />
+                                          </div>
+                                        )
                                       }
                                     }
 

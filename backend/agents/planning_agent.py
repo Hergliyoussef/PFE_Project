@@ -35,6 +35,8 @@ class ActionParams(BaseModel):
     issue_ids: Optional[list[int]] = Field(default=None, description="Liste des IDs des tâches (tickets) à associer à ce sprint/version (ex: [12, 15])")
     fixed_version: Optional[str] = Field(default=None, description="Nom de la version/sprint à associer à la tâche (pour create_issue ou update_issue, ex: 's.4')")
     new_name: Optional[str] = Field(default=None, description="Nouveau nom du sprint/version pour modification (pour update_version)")
+    start_date: Optional[str] = Field(default=None, description="Date de début de la tâche au format YYYY-MM-DD (pour create_issue)")
+    due_date: Optional[str] = Field(default=None, description="Date d'échéance de la tâche au format YYYY-MM-DD (pour create_issue)")
 
 
 class SingleAction(BaseModel):
@@ -77,7 +79,7 @@ RÈGLES IMPORTANTES :
 1. MULTI-ACTIONS : Prépare une liste complète si nécessaire (ex: Création projet + Membres).
 2. UTILISATEURS : Création=create_user, Modification=update_user, Suppression=delete_user.
 3. MEMBRES DU PROJET : Ajout=add_project_member (project_id + user_id), Retrait=remove_project_member.
-4. TÂCHES : Création=create_issue, Modification=update_issue, Suppression=delete_issue (issue_id obligatoire).
+4. TÂCHES : Création=create_issue (si spécifié, extrais start_date et due_date au format YYYY-MM-DD), Modification=update_issue, Suppression=delete_issue (issue_id obligatoire).
 5. tracker_id : 1=Anomalie, 2=Evolution, 3=Assistance.
 6. priority_id : 1=Bas, 2=Normal, 3=Haut, 4=Urgent, 5=Immédiat.
 7. GESTION UTILISATEURS : Pour add_project_member, mets simplement le nom/login dans `user_id`. Le backend cherchera automatiquement l'utilisateur dans Redmine et ne le créera QUE s'il n'existe pas. Ne génère create_user que si l'utilisateur demande EXPLICITEMENT de créer un nouveau compte.
@@ -87,6 +89,7 @@ RÈGLES IMPORTANTES :
 11. ASSOCIATION DE TÂCHES AUX SPRINTS PAR NOM : Si tu crées ou modifies une tâche en précisant qu'elle doit appartenir à un sprint ou une version (qu'elle soit créée en même temps ou déjà existante), renseigne le nom de cette version/sprint dans le paramètre 'fixed_version' (ex: 's.4' ou 'Sprint 1').
 12. SUPPRESSION VERSIONS / SPRINTS : Pour supprimer une version ou un sprint dédié à un projet, utilise 'delete_version'. Remplis 'name' pour le nom du sprint/version à supprimer, et 'project_id' pour le projet.
 13. MODIFICATION VERSIONS / SPRINTS : Pour modifier ou renommer une version ou un sprint dédié à un projet, utilise 'update_version'. Remplis 'name' pour le nom actuel du sprint/version à modifier, 'new_name' pour le nouveau nom à lui attribuer (si renommé), 'description' pour la nouvelle description (si modifiée), et 'project_id' pour le projet.
+14. DATE ACTUELLE : Aujourd'hui est le {current_date}. Utilise cette date de référence pour calculer les dates relatives si l'utilisateur en mentionne (ex: 'demain', 'd'ici vendredi', 'fin du mois').
 
 REQUIS : Réponds UNIQUEMENT avec un objet JSON valide suivant EXACTEMENT cette structure :
 {{
@@ -121,6 +124,9 @@ def planning_node(state: AgentState) -> dict:
     project_name = state.get("project_name", "")
     chain = get_planning_chain()
     
+    from datetime import datetime
+    current_date_str = datetime.now().strftime("%Y-%m-%d")
+    
     try:
         # On ne passe pas le dernier message (la question actuelle) dans l'historique car il est déjà dans "human"
         history_context = state["messages"][:-1]
@@ -130,7 +136,8 @@ def planning_node(state: AgentState) -> dict:
             "history": history_context,
             "current_project_id": project_id,
             "current_project_name": project_name,
-            "user_role": state.get("user_role", "PROJECT_MANAGER")
+            "user_role": state.get("user_role", "PROJECT_MANAGER"),
+            "current_date": current_date_str
         })
         content = response.content if hasattr(response, "content") else str(response)
         
@@ -152,6 +159,10 @@ def planning_node(state: AgentState) -> dict:
                 if not action.parameters.project_id:
                     action.parameters.project_id = project_id
                     logger.info(f"[Planning Node] Injection auto du projet '{project_id}' dans l'action {action.action_type}")
+            if action.action_type == "create_issue":
+                if not action.parameters.start_date:
+                    action.parameters.start_date = current_date_str
+                    logger.info(f"[Planning Node] Injection auto start_date '{current_date_str}' dans l'action create_issue")
 
         return {
             **state,

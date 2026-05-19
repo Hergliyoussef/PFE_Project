@@ -199,9 +199,24 @@ class RedmineClient:
         try:
             data = self._get(f"/projects/{project_id}/versions.json", api_key=api_key)
             if data and "versions" in data:
+                # 1. Correspondance exacte d'abord (insensible à la casse)
+                version_name_clean = version_name.lower().strip()
                 for v in data["versions"]:
-                    if v.get("name", "").lower().strip() == version_name.lower().strip():
+                    if v.get("name", "").lower().strip() == version_name_clean:
                         return int(v["id"])
+                
+                # 2. Correspondance floue par normalisation (sprint -> s, suppr non-alpha)
+                import re
+                def _norm(text: str) -> str:
+                    t = text.lower().replace("sprint", "s")
+                    return re.sub(r'[^a-z0-9]', '', t)
+                
+                norm_input = _norm(version_name)
+                if len(norm_input) >= 2:
+                    for v in data["versions"]:
+                        norm_v = _norm(v.get("name", ""))
+                        if norm_input in norm_v:
+                            return int(v["id"])
         except Exception as e:
             logger.error(f"[Redmine] Erreur lors de la recherche de la version '{version_name}' : {e}")
         return None
@@ -580,6 +595,14 @@ class RedmineClient:
             if version_id:
                 payload["issue"]["fixed_version_id"] = version_id
         
+        # Gestion des dates (start_date et due_date)
+        start_date = kwargs.get("start_date")
+        due_date = kwargs.get("due_date")
+        if start_date and str(start_date).strip():
+            payload["issue"]["start_date"] = str(start_date).strip()
+        if due_date and str(due_date).strip():
+            payload["issue"]["due_date"] = str(due_date).strip()
+        
         if estimated_hours is not None and str(estimated_hours).strip() != "":
             try:
                 payload["issue"]["estimated_hours"] = float(estimated_hours)
@@ -687,6 +710,15 @@ class RedmineClient:
                 issue_payload["fixed_version_id"] = int(kwargs.get("fixed_version_id"))
             except (ValueError, TypeError):
                 pass
+
+        # Gestion des dates de début et d'échéance
+        start_date = kwargs.get("start_date")
+        if start_date is not None and str(start_date).strip() != "":
+            issue_payload["start_date"] = str(start_date).strip()
+            
+        due_date = kwargs.get("due_date")
+        if due_date is not None and str(due_date).strip() != "":
+            issue_payload["due_date"] = str(due_date).strip()
 
         if not issue_payload:
             raise Exception("Aucune modification valide n'a été demandée pour ce ticket.")

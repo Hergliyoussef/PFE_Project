@@ -20,9 +20,9 @@ REFUSAL_MSG = "Je suis un assistant spécialisé uniquement dans la gestion de p
 
 class RouterDecision(BaseModel):
     """Décision du superviseur sur l'agent à appeler."""
-    action: Literal["analyse", "rapporteur", "planning", "hors_sujet"] = Field(description="L'agent spécialisé ou hors_sujet.")
+    action: Literal["analyse", "rapporteur", "planning", "clarification", "hors_sujet"] = Field(description="L'agent spécialisé, clarification ou hors_sujet.")
     intent: str = Field(default="general", description="L'intention détectée.")
-    message: str = Field(default="", description="Réponse directe si hors_sujet.")
+    message: str = Field(default="", description="Réponse directe si hors_sujet ou clarification.")
 
 parser = PydanticOutputParser(pydantic_object=RouterDecision)
 
@@ -32,12 +32,13 @@ RÈGLES :
 1. Si l'utilisateur demande des chiffres, métriques, membres ou l'état du projet -> action="analyse"
 2. Si l'utilisateur demande de créer, modifier ou supprimer quelque chose -> action="planning"
 3. Si l'utilisateur demande un rapport, une synthèse ou un résumé -> action="rapporteur"
+4. Si la demande de l'utilisateur est trop floue, ambiguë, ou s'il demande simplement des données de manière imprécise (ex: "Montre-moi des données", "donne moi les infos") ET qu'il n'y a pas d'historique de conversation précédent pour clarifier ce qu'il souhaite, choisis action="clarification" et demande-lui poliment de préciser ce qu'il souhaite voir (par exemple : l'avancement global, la liste des tâches en retard, la charge de travail de l'équipe, ou l'analyse des risques).
 
 IMPORTANT : Réponds TOUJOURS au format JSON suivant :
 {{
-  "action": "analyse" | "planning" | "rapporteur" | "hors_sujet",
+  "action": "analyse" | "planning" | "rapporteur" | "clarification" | "hors_sujet",
   "intent": "court résumé de l'intention",
-  "message": "Ta réponse directe si tu as choisi hors_sujet (ex: Bonjour ! ou Voici le tableau :)"
+  "message": "Ta réponse directe si tu as choisi hors_sujet ou clarification (ex: Bonjour ! ou Quelles données souhaitez-vous voir ?)"
 }}
 
 Regarde bien les messages précédents pour comprendre les questions courtes comme 'en tableau' ou 'pourquoi ?'."""
@@ -94,7 +95,7 @@ def _get_decision(question: str, history: list) -> RouterDecision:
             # Injection automatique des champs optionnels manquants pour éviter les erreurs de validation
             if "intent" not in data:
                 data["intent"] = "general"
-            if "action" not in data or data["action"] not in ["analyse", "rapporteur", "planning", "hors_sujet"]:
+            if "action" not in data or data["action"] not in ["analyse", "rapporteur", "planning", "clarification", "hors_sujet"]:
                 data["action"] = "hors_sujet"
             if "message" not in data:
                 data["message"] = ""
@@ -194,9 +195,11 @@ async def run_agent_stream(question: str, project_id: str, user_id: str, user_ro
         if final_intent == "planning" and isinstance(final_data, dict) and "summary" in final_data:
             display_text = final_data["summary"]
 
-        words = display_text.split(" ")
-        for i, word in enumerate(words):
-            yield f"data: {json.dumps({'token': word + (' ' if i < len(words)-1 else ''), 'intent': final_intent, 'agent': decision.action, 'data': final_data, 'conversation_id': conversation_id})}\n\n"
+        # Stream the text in small chunks of characters to preserve all formatting (newlines, consecutive spaces)
+        chunk_size = 4
+        for i in range(0, len(display_text), chunk_size):
+            chunk = display_text[i:i+chunk_size]
+            yield f"data: {json.dumps({'token': chunk, 'intent': final_intent, 'agent': decision.action, 'data': final_data, 'conversation_id': conversation_id})}\n\n"
             import asyncio
             await asyncio.sleep(0.01) # Un peu plus rapide
 

@@ -59,10 +59,19 @@ def convert_history_to_messages(history: list) -> list[BaseMessage]:
             messages.append(msg)
     return messages
 
-def get_router_chain():
+def get_router_chain(active_project: str = "", user_role: str = "", user_id: str = ""):
     llm = get_llm("supervisor")
+    
+    custom_system_prompt = SYSTEM_PROMPT
+    if active_project and user_role:
+        custom_system_prompt += f"\n\nCONTEXTE ACTUEL : Le projet en cours de discussion est '{active_project}'. L'utilisateur a le rôle '{user_role}'."
+        if user_id:
+            custom_system_prompt += f" Son identifiant d'utilisateur (login) est '{user_id}'."
+        if user_role != "CEO":
+            custom_system_prompt += f"\nSÉCURITÉ STRICTE : L'utilisateur n'est pas CEO. Il a uniquement le rôle '{user_role}'. Il a le droit de poser des questions UNIQUEMENT sur le projet actif '{active_project}'. S'il pose une question, demande des chiffres, des métriques, des tâches ou des rapports sur un AUTRE projet (ex: 'gestpro', 'medicare', etc.), tu dois impérativement choisir action='hors_sujet' et renseigner message='Accès refusé. Vous n'êtes pas autorisé à interroger ce projet car vous n'en êtes pas le Project Manager.'."
+            
     prompt = ChatPromptTemplate.from_messages([
-        ("system", SYSTEM_PROMPT),
+        ("system", custom_system_prompt),
         MessagesPlaceholder(variable_name="history"),
         ("human", "{question}"),
     ])
@@ -72,11 +81,16 @@ def get_router_chain():
 
 def _get_decision(question: str, history: list) -> RouterDecision:
     """Invoque l'LLM et tente de parser le JSON, avec repli sécurisé."""
+    from services.redmine_client import active_project_id_ctx, current_user_role_ctx, redmine_user_login_ctx
+    active_project = active_project_id_ctx.get() or ""
+    user_role = current_user_role_ctx.get() or ""
+    user_id = redmine_user_login_ctx.get() or ""
+
     print(f"\n[DEBUG HISTORY] Supervisor reçu {len(history)} messages d'historique.")
     for i, m in enumerate(history):
         print(f"  -> Msg {i} [{m.__class__.__name__}]: {m.content[:100]}")
     
-    chain = get_router_chain()
+    chain = get_router_chain(active_project=active_project, user_role=user_role, user_id=user_id)
     try:
         response = chain.invoke({"question": question, "history": history})
         # Si la réponse est déjà un objet (certains LLMs le font avec bind_tools), on l'utilise
@@ -158,8 +172,15 @@ master_chain = (
     | RunnableLambda(_execute_routing)
 )
 
-async def run_agent_stream(question: str, project_id: str, user_id: str, user_role: str = "PROJECT_MANAGER", history: list = None, project_name: str = "", conversation_id: str = None):
+async def run_agent_stream(question: str, project_id: str, user_id: str, user_role: str = "PROJECT_MANAGER", history: list = None, project_name: str = "", conversation_id: str = None, api_key: str = None):
     """Version asynchrone qui streame la réponse finale."""
+    from services.redmine_client import redmine_api_key_ctx, redmine_user_login_ctx, active_project_id_ctx, current_user_role_ctx
+    
+    redmine_api_key_ctx.set(api_key)
+    redmine_user_login_ctx.set(user_id)
+    active_project_id_ctx.set(project_id)
+    current_user_role_ctx.set(user_role)
+    
     converted_history = convert_history_to_messages(history)
     
     state: AgentState = {
@@ -264,7 +285,14 @@ async def run_agent_stream(question: str, project_id: str, user_id: str, user_ro
         yield f"data: {json.dumps({'token': 'Erreur technique...', 'intent': 'error'})}\n\n"
         yield "data: [DONE]\n\n"
 
-def run_agent(question: str, project_id: str, user_id: str, user_role: str = "PROJECT_MANAGER", history: list = None, project_name: str = "") -> dict:
+def run_agent(question: str, project_id: str, user_id: str, user_role: str = "PROJECT_MANAGER", history: list = None, project_name: str = "", api_key: str = None) -> dict:
+    from services.redmine_client import redmine_api_key_ctx, redmine_user_login_ctx, active_project_id_ctx, current_user_role_ctx
+    
+    redmine_api_key_ctx.set(api_key)
+    redmine_user_login_ctx.set(user_id)
+    active_project_id_ctx.set(project_id)
+    current_user_role_ctx.set(user_role)
+    
     # 1. Conversion de l'historique en objets Messages
     converted_history = convert_history_to_messages(history)
     

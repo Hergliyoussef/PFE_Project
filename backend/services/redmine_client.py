@@ -19,6 +19,8 @@ logger = logging.getLogger(__name__)
 # --- CONTEXTE POUR L'IMPERSONNATION ---
 redmine_api_key_ctx: ContextVar[Optional[str]] = ContextVar("redmine_api_key", default=None)
 redmine_user_login_ctx: ContextVar[Optional[str]] = ContextVar("redmine_user_login", default=None)
+active_project_id_ctx: ContextVar[Optional[str]] = ContextVar("active_project_id", default=None)
+current_user_role_ctx: ContextVar[Optional[str]] = ContextVar("current_user_role", default=None)
 
 class RedmineClient:
     def __init__(self):

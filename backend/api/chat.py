@@ -11,7 +11,7 @@ import json
 from db.session import get_db
 from db.models import Message as DBMessage, Conversation as DBConv, User as DBUser
 from services.auth import get_current_user, require_authorized_role, AUTHORIZED_ROLES
-from services.redmine_client import redmine, redmine_api_key_ctx, redmine_user_login_ctx
+from services.redmine_client import redmine, redmine_api_key_ctx, redmine_user_login_ctx, active_project_id_ctx, current_user_role_ctx
 from services.redis_client import (
     save_message, get_history,
     get_cached_metrics, cache_metrics,
@@ -56,10 +56,14 @@ async def verify_project_access(project_id: str, current_user: dict):
     is_ceo = current_user.get("is_admin", False)
     if is_ceo:
         redmine_api_key_ctx.set(settings.redmine_api_key)
+        redmine_user_login_ctx.set(None)
         return True
     
     # Pour les PM, on vérifie leur rôle sur ce projet précis
-    redmine_api_key_ctx.set(current_user.get("api_key"))
+    user_api_key = current_user.get("api_key")
+    effective_api_key = user_api_key if user_api_key and user_api_key.strip() else settings.redmine_api_key
+    redmine_api_key_ctx.set(effective_api_key)
+    redmine_user_login_ctx.set(current_user.get("sub"))
     try:
         user_id = current_user.get("user_id")
         memberships = redmine.get_project_members(project_id)
@@ -81,6 +85,41 @@ async def verify_project_access(project_id: str, current_user: dict):
     except Exception as e:
         logger.error(f"[Access] Erreur verify_project_access: {e}")
         return False
+
+def check_unauthorized_project_access(question: str, active_project_id: str, is_ceo: bool) -> str | None:
+    """
+    Vérifie de manière déterministe en Python si l'utilisateur (non-CEO) tente de poser 
+    une question sur un autre projet que le projet actif.
+    Retourne le message de refus si c'est le cas, sinon None.
+    """
+    if is_ceo:
+        return None
+        
+    try:
+        # Récupérer tous les projets de Redmine
+        projects = redmine.get_projects()
+        question_lower = question.lower()
+        active_project_id_lower = active_project_id.lower()
+        
+        # Trouver si la question contient le nom ou l'identifiant d'un AUTRE projet
+        for p in projects:
+            p_id = p.get("identifier", "").lower()
+            p_name = p.get("name", "").lower()
+            
+            # Si le projet est le projet actif, on autorise
+            if p_id == active_project_id_lower:
+                continue
+                
+            # Vérifier si l'identifiant ou le nom du projet est mentionné dans la question
+            if p_id and (p_id in question_lower):
+                return f"Accès refusé. Vous n'êtes pas autorisé à interroger le projet '{p.get('name')}' car vous n'en êtes pas le Project Manager."
+            if p_name and (p_name in question_lower):
+                return f"Accès refusé. Vous n'êtes pas autorisé à interroger le projet '{p.get('name')}' car vous n'en êtes pas le Project Manager."
+                
+    except Exception as e:
+        logger.error(f"Erreur lors de la vérification déterministe des projets : {e}")
+        
+    return None
 
 # ── LOGIQUE DE PERSISTENCE POSTGRES ───────────────────────────
 
@@ -138,7 +177,6 @@ async def chat_stream(
     if not has_access:
         raise HTTPException(status_code=403, detail="Accès refusé.")
 
-    redmine_user_login_ctx.set(current_user.get("sub"))
     user_id_str = current_user.get("sub")
     user_id_int = current_user.get("user_id", 1)
     
@@ -148,11 +186,42 @@ async def chat_stream(
     if "CEO" in user_roles or current_user.get("is_admin"):
         primary_role = "CEO"
 
+    redmine_user_login_ctx.set(None if primary_role == "CEO" else user_id_str)
+    active_project_id_ctx.set(req.project_id)
+    current_user_role_ctx.set(primary_role)
+
     # Gestion de l'ID conversation (Multi-session)
     conv_id = req.conversation_id
     safe_proj_id = str(req.project_id) if req.project_id and str(req.project_id) != "None" else "inconnu"
     if not conv_id:
         conv_id = f"conv_{user_id_int}_{safe_proj_id}_{uuid.uuid4().hex[:8]}"
+
+    # Détection déterministe d'une tentative d'accès à un autre projet non autorisé avant d'appeler l'IA
+    refusal_msg = check_unauthorized_project_access(
+        question=req.question,
+        active_project_id=req.project_id,
+        is_ceo=(primary_role == "CEO")
+    )
+    if refusal_msg:
+        save_message(user_id_str, f"{safe_proj_id}:{conv_id}", "user", req.question)
+        save_message(user_id_str, f"{safe_proj_id}:{conv_id}", "assistant", refusal_msg)
+        _save_to_postgres(
+            db=db,
+            project_id=req.project_id,
+            project_name=req.project_name or "",
+            question=req.question,
+            answer=refusal_msg,
+            conversation_id=conv_id,
+            username=user_id_str,
+            user_role=primary_role
+        )
+        async def generate_refusal():
+            yield f"data: {json.dumps({'token': refusal_msg})}\n\n"
+        return StreamingResponse(generate_refusal(), media_type="text/event-stream")
+
+    from config import settings
+    user_api_key = current_user.get("api_key")
+    effective_api_key = user_api_key if user_api_key and user_api_key.strip() else settings.redmine_api_key
 
     from agents.supervisor_agent import run_agent_stream
     return StreamingResponse(
@@ -163,7 +232,8 @@ async def chat_stream(
             user_id=user_id_str,
             user_role=primary_role,
             history=req.history or [],
-            conversation_id=conv_id
+            conversation_id=conv_id,
+            api_key=effective_api_key
         ),
         media_type="text/event-stream"
     )
@@ -207,6 +277,45 @@ async def chat(
         elif "Manager" in user_roles:
             primary_role = "PROJECT_MANAGER"
 
+        redmine_user_login_ctx.set(None if primary_role == "CEO" else user_id_str)
+        active_project_id_ctx.set(req.project_id)
+        current_user_role_ctx.set(primary_role)
+
+        # Détection déterministe d'une tentative d'accès à un autre projet non autorisé avant d'appeler l'IA
+        refusal_msg = check_unauthorized_project_access(
+            question=req.question,
+            active_project_id=req.project_id,
+            is_ceo=(primary_role == "CEO")
+        )
+        if refusal_msg:
+            save_message(user_id_str, redis_key, "user", req.question)
+            save_message(user_id_str, redis_key, "assistant", refusal_msg)
+            u_msg_id, a_msg_id = _save_to_postgres(
+                db=db,
+                project_id=req.project_id,
+                project_name=req.project_name or "",
+                question=req.question,
+                answer=refusal_msg,
+                conversation_id=conv_id,
+                username=user_id_str,
+                user_role=primary_role
+            )
+            return ChatResponse(
+                answer=refusal_msg,
+                intent="hors_sujet",
+                agent_used="supervisor",
+                project_id=req.project_id,
+                display_type="text",
+                data={},
+                conversation_id=conv_id,
+                user_message_id=u_msg_id,
+                ai_message_id=a_msg_id
+            )
+
+        from config import settings
+        user_api_key = current_user.get("api_key")
+        effective_api_key = user_api_key if user_api_key and user_api_key.strip() else settings.redmine_api_key
+
         from agents.supervisor_agent import run_agent
         result = run_agent(
             question=req.question,
@@ -215,6 +324,7 @@ async def chat(
             user_id=user_id_str,
             user_role=primary_role,
             history=context_history or [],
+            api_key=effective_api_key
         )
 
         intent = result.get("intent", "general")
@@ -302,6 +412,15 @@ async def execute_task(
     # Set Redmine context
     redmine_api_key_ctx.set(current_user.get("api_key"))
     redmine_user_login_ctx.set(current_user.get("sub"))
+    
+    user_roles = current_user.get("roles", [])
+    primary_role = "PROJECT_MANAGER"
+    if "CEO" in user_roles or current_user.get("is_admin"):
+        primary_role = "CEO"
+        
+    current_user_role_ctx.set(primary_role)
+    if req.parameters and req.parameters.get("project_id"):
+        active_project_id_ctx.set(str(req.parameters.get("project_id")))
 
     try:
         from services.redmine_client import redmine

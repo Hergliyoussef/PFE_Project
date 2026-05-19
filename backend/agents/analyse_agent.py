@@ -14,7 +14,7 @@ logger = logging.getLogger(__name__)
 TOOLS_MAP = {t.name: t for t in ANALYSE_TOOLS}
 
 SYSTEM_TEMPLATE = """Tu es l'Agent Analyse expert des données Redmine du projet {project_id}.
-Ton utilisateur actuel est : {user_role}.
+Ton utilisateur actuel est : {user_role} (identifiant/login: {user_id}).
 
 RÈGLES CRITIQUES D'INTÉGRITÉ :
 1. INTERDICTION FORMELLE d'inventer des noms de projets, des chiffres ou des dates.
@@ -70,12 +70,13 @@ def analyse_node(state: AgentState) -> dict:
     """
     project_id = state.get("project_id", "default")
     user_role  = state.get("user_role", "PROJECT_MANAGER")
+    user_id    = state.get("user_id", "")
     
     llm = get_llm("analyse").bind_tools(ANALYSE_TOOLS)
     
     # Préparation des messages (System + Historique)
     working_messages = [
-        SystemMessage(content=SYSTEM_TEMPLATE.format(project_id=project_id, user_role=user_role))
+        SystemMessage(content=SYSTEM_TEMPLATE.format(project_id=project_id, user_role=user_role, user_id=user_id))
     ] + state["messages"]
 
     try:

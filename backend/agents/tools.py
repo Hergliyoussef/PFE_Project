@@ -7,7 +7,61 @@ import json, sys, os
 from datetime import date, datetime, timedelta
 
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
-from services.redmine_client import redmine
+from services.redmine_client import redmine, active_project_id_ctx, current_user_role_ctx
+
+def resolve_authorized_project_id(project_id: str) -> str:
+    """
+    Vérifie et résout le project_id pour les outils.
+    CEO -> Peut interroger n'importe quel projet (ex: gestpro depuis le chat de shopflow).
+    PM/Autre -> Strictement restreint au projet de la session actuelle pour éviter les fuites.
+    """
+    import logging
+    logger = logging.getLogger(__name__)
+    role = current_user_role_ctx.get()
+    active_project = active_project_id_ctx.get()
+    
+    logger.info(f"[Resolve Project ID] input project_id: {project_id}, role: {role}, active_project: {active_project}")
+    
+    if role == "CEO":
+        return project_id
+    
+    # Restreindre strictement le PM à son projet actif pour éviter les fuites transverses
+    if active_project:
+        if project_id != active_project:
+            raise PermissionError(f"Accès refusé. En tant que Chef de Projet, vous ne pouvez pas accéder aux données du projet '{project_id}'. Vos requêtes sont limitées au projet actif '{active_project}'.")
+        return active_project
+        
+    return project_id
+
+def is_authorized_project_manager(project_id: str) -> bool:
+    """
+    Vérifie si l'utilisateur actuel a le rôle de gestionnaire (Manager / Chef de projet...) sur le projet Redmine.
+    """
+    role = current_user_role_ctx.get()
+    if role == "CEO":
+        return True
+        
+    try:
+        # Récupérer l'utilisateur actuel respectant l'impersonation
+        curr = redmine._get("/users/current.json").get("user", {})
+        user_id = curr.get("id")
+        if not user_id:
+            return False
+            
+        # Récupérer les membres du projet
+        memberships = redmine.get_project_members(project_id)
+        user_membership = next((m for m in memberships if m.get("user", {}).get("id") == user_id), None)
+        if not user_membership:
+            return False
+            
+        from services.auth import AUTHORIZED_ROLES
+        allowed = {r.lower().strip() for r in AUTHORIZED_ROLES}
+        user_roles = {r.get("name", "").lower().strip() for r in user_membership.get("roles", [])}
+        return bool(user_roles & allowed)
+    except Exception as e:
+        import logging
+        logging.getLogger(__name__).error(f"[Auth PM] Erreur vérification rôle sur {project_id}: {e}")
+        return False
 from db.session import SessionLocal
 from db.models import Conversation as DBConv
 
@@ -19,6 +73,7 @@ def get_project_metrics(project_id: str) -> str:
     IMPORTANT : 'project_id' doit être l'identifiant technique (slug), ex: 'gestpro' et non 'GestPro'.
     """
     try:
+        project_id = resolve_authorized_project_id(project_id)
         data = redmine.compute_project_metrics(project_id)
         # Ajout d'une note explicite contextuelle pour éviter que l'IA ne se trompe de métrique 
         # (ex: confondre completion_rate et avancement global)
@@ -33,6 +88,7 @@ def get_overdue_issues(project_id: str) -> str:
     IMPORTANT : 'project_id' doit être l'identifiant technique (slug).
     """
     try:
+        project_id = resolve_authorized_project_id(project_id)
         issues = redmine.get_overdue_issues(project_id)
         result = [{
             "id": i["id"], "subject": i["subject"], "due_date": i.get("due_date"),
@@ -53,6 +109,7 @@ def get_critical_path(project_id: str) -> str:
     Analyse les relations 'precedes/follows' de Redmine.
     """
     try:
+        project_id = resolve_authorized_project_id(project_id)
         issues = redmine.get_issues(project_id, status="open")
         # On filtre les tâches qui ont des relations bloquantes
         critical_tasks = []
@@ -78,6 +135,7 @@ def get_velocity_trend(project_id: str) -> str:
     Prédit si le projet accélère ou ralentit.
     """
     try:
+        project_id = resolve_authorized_project_id(project_id)
         versions = redmine.get_versions(project_id)
         # On prend les 3 dernières versions fermées ou en cours
         history = []
@@ -110,6 +168,7 @@ def get_member_performance(project_id: str) -> str:
     Identifie les membres les plus efficaces ou ceux en difficulté.
     """
     try:
+        project_id = resolve_authorized_project_id(project_id)
         issues = redmine.get_issues(project_id, status="*")
         performance = {}
         for i in issues:
@@ -148,6 +207,7 @@ def classify_risk(project_id: str) -> str:
     Retards + Bugs + Vélocité + Chemin Critique.
     """
     try:
+        project_id = resolve_authorized_project_id(project_id)
         metrics = redmine.compute_project_metrics(project_id)
         
         # Récupération des données pour les nouveaux critères
@@ -184,6 +244,7 @@ def get_project_issues(project_id: str, status: str = "open") -> str:
     IMPORTANT : 'project_id' doit être l'identifiant technique (slug).
     """
     try:
+        project_id = resolve_authorized_project_id(project_id)
         import logging
         logger = logging.getLogger(__name__)
         
@@ -231,6 +292,9 @@ def get_all_projects_status() -> str:
         results = []
         for p in projects:
             try:
+                # Filtrer les projets pour lesquels l'utilisateur n'est pas un Manager autorisé
+                if not is_authorized_project_manager(p["identifier"]):
+                    continue
                 # Calcul rapide des métriques pour chaque projet
                 m = redmine.compute_project_metrics(p["identifier"])
                 results.append({
@@ -259,6 +323,7 @@ def delete_project_conversations(project_id: str, user_id: int) -> str:
     """
     db = SessionLocal()
     try:
+        project_id = resolve_authorized_project_id(project_id)
         query = db.query(DBConv).filter(
             DBConv.user_id == user_id,
             DBConv.id.like(f"conv_{user_id}_{project_id}_%")
@@ -284,6 +349,7 @@ def get_sprint_status(project_id: str) -> str:
     IMPORTANT : 'project_id' doit être l'identifiant technique (slug).
     """
     try:
+        project_id = resolve_authorized_project_id(project_id)
         versions = redmine.get_versions(project_id)
         issues = redmine.get_issues(project_id, status="*")
         
@@ -332,6 +398,7 @@ def get_team_workload(project_id: str) -> str:
     IMPORTANT : 'project_id' doit être l'identifiant technique (slug).
     """
     try:
+        project_id = resolve_authorized_project_id(project_id)
         metrics = redmine.compute_project_metrics(project_id)
         result = {
             "workload": metrics.get("team_workload", []),
@@ -348,6 +415,7 @@ def get_not_started_issues(project_id: str) -> str:
     IMPORTANT : 'project_id' doit être l'identifiant technique (slug).
     """
     try:
+        project_id = resolve_authorized_project_id(project_id)
         issues = redmine.get_not_started_issues(project_id)
         result = [{
             "id": i["id"],

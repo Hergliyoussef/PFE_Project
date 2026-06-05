@@ -40,7 +40,7 @@ export default function Home() {
                   }
                 }}
               >
-                🚀 Accéder à l'Assistant
+                Accéder à l'Assistant
               </Button>
             </div>
           </div>

@@ -37,9 +37,7 @@ import axios from "axios"
 import Cookies from "js-cookie"
 import { useNavigate, useParams } from "react-router-dom"
 
-const API_BASE_URL = import.meta.env.DEV 
-  ? "http://localhost:8000/api/v1" 
-  : "/api/v1"
+const API_BASE_URL = "/api/v1"
 
 const getApi = () => {
   const token = Cookies.get("pm_chatbot_access_token")
@@ -161,6 +159,24 @@ export default function Dashboard() {
     try { return JSON.parse(str); } catch { return null; }
   }
 
+  const [metrics, setMetrics] = useState<ProjectMetrics | null>(null)
+  const [loading, setLoading] = useState(false)
+  const navigate = useNavigate()
+
+  const fetchMetrics = useCallback(async (targetPid?: string) => {
+    const activePid = targetPid || projectId || localStorage.getItem("pm_active_project")
+    if (!activePid) return
+    setLoading(true)
+    try {
+      const res = await getApi().get(`/projects/${activePid}/metrics`)
+      setMetrics(res.data)
+    } catch (e) {
+      console.error("Erreur metrics", e)
+    } finally {
+      setLoading(false)
+    }
+  }, [projectId]);
+
   // --- WebSocket pour Temps Réel ---
   useEffect(() => {
     if (!pid) return;
@@ -179,32 +195,26 @@ export default function Dashboard() {
         if (Notification.permission === "granted") {
           new Notification("Alerte Projet PM", { body: data.alert.message });
         }
+      } else if (data?.type === "metrics_updated") {
+        console.log("[WS] Métriques mises à jour, rafraîchissement...");
+        fetchMetrics(pid);
       }
     };
 
     socket.onclose = () => console.log("[WS] Connexion fermée");
 
-    return () => socket.close();
-  }, [pid]);
+    return () => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.close();
+      } else if (socket.readyState === WebSocket.CONNECTING) {
+        socket.addEventListener('open', () => socket.close());
+      } else {
+        socket.close();
+      }
+    };
+  }, [pid, fetchMetrics]);
 
-  const [metrics, setMetrics] = useState<ProjectMetrics | null>(null)
-  const [loading, setLoading] = useState(false)
-  const navigate = useNavigate()
 
-
-  const fetchMetrics = useCallback(async (targetPid?: string) => {
-    const activePid = targetPid || projectId || localStorage.getItem("pm_active_project")
-    if (!activePid) return
-    setLoading(true)
-    try {
-      const res = await getApi().get(`/projects/${activePid}/metrics`)
-      setMetrics(res.data)
-    } catch (e) {
-      console.error("Erreur metrics", e)
-    } finally {
-      setLoading(false)
-    }
-  }, [projectId]);
 
   // Synchroniser et charger les métriques du projet actif
   useEffect(() => {
@@ -213,18 +223,12 @@ export default function Dashboard() {
     // 1. Mettre à jour localStorage
     localStorage.setItem("pm_active_project", pid);
 
-    // 2. Charger initialement les métriques (asynchronisé pour éviter setState synchrone dans l'effet)
+    // 2. Charger initialement les métriques
     Promise.resolve().then(() => {
       fetchMetrics(pid);
     });
 
-    // 3. Mettre en place le rafraîchissement automatique (chaque 5 secondes)
-    const interval = setInterval(() => {
-      fetchMetrics(pid);
-    }, 5000);
-
     return () => {
-      clearInterval(interval);
       setMetrics(null); // IMPORTANT: Effacer les anciennes données lors du nettoyage/changement
     };
   }, [pid, fetchMetrics]);
@@ -266,7 +270,7 @@ export default function Dashboard() {
 
         {/* Alert Notifications Overlay */}
         <div className="fixed top-24 right-8 z-[101] flex flex-col gap-4 max-w-md">
-          {activeAlerts.map((alert, idx) => (
+          {[...activeAlerts].sort((a, b) => (b.created_at || 0) - (a.created_at || 0)).map((alert, idx) => (
             <div
               key={idx}
               className={`p-4 rounded-2xl border shadow-2xl backdrop-blur-2xl animate-fade-in-right flex items-start gap-4 
@@ -331,7 +335,7 @@ export default function Dashboard() {
               {/* Indicateur de Santé Global Dynamique */}
               <div className="hidden xl:flex items-center gap-6 p-4 bg-white/5 backdrop-blur-xl border border-white/10 rounded-[32px] hover:bg-white/[0.08] transition-all">
                 <div className="relative w-16 h-16">
-                  <ResponsiveContainer width="100%" height="100%">
+                  <ResponsiveContainer width="100%" height="100%" minWidth={1} minHeight={1}>
                     <PieChart>
                       <Pie
                         data={[

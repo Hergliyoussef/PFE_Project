@@ -10,4 +10,23 @@ export default defineConfig({
       "@": path.resolve(__dirname, "./src"),
     },
   },
+  server: {
+    host: '0.0.0.0',   // Écoute sur localhost ET 127.0.0.1
+    port: 5173,
+    proxy: {
+      // Toutes les requêtes /api/* sont redirigées vers le backend FastAPI
+      '/api': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+        secure: false,
+      },
+      // WebSocket /ws/* redirigés aussi vers le backend
+      '/ws': {
+        target: 'http://127.0.0.1:8000',
+        changeOrigin: true,
+        secure: false,
+        ws: true,
+      },
+    },
+  },
 })

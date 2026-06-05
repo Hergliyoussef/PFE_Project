@@ -1,7 +1,6 @@
 import { useState, useEffect, useRef, useMemo } from "react"
 import Sidebar from "@/components/layout/Sidebar"
 import { Button } from "@/components/ui/button"
-import { Input } from "@/components/ui/input"
 import { ScrollArea } from "@/components/ui/scroll-area"
 import { Send, Loader2, Bot, User as UserIcon, CheckCircle2, XCircle, AlertTriangle, Clock, Calendar, Shield, BarChart3, Trophy, Target, Zap, Trash2, X, Activity, Bell } from "lucide-react"
 import axios from "axios"
@@ -10,9 +9,7 @@ import ReactMarkdown from "react-markdown"
 import remarkGfm from "remark-gfm"
 import { toast } from "sonner"
 
-const API_BASE_URL = import.meta.env.DEV 
-  ? "http://localhost:8000/api/v1" 
-  : "/api/v1"
+const API_BASE_URL = "/api/v1"
 
 const getApi = () => {
   const token = Cookies.get("pm_chatbot_access_token")
@@ -219,8 +216,12 @@ export default function Chat() {
   }, []);
 
   const displayedAlerts = useMemo(() => {
-    if (isUserCeo) return activeAlerts;
-    return activeAlerts.filter(a => authorizedProjectIds.includes(a.project_id));
+    let alerts = activeAlerts;
+    if (!isUserCeo) {
+      alerts = activeAlerts.filter(a => authorizedProjectIds.includes(a.project_id));
+    }
+    // S'assurer que les plus récents (created_at le plus grand) sont en premier
+    return [...alerts].sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
   }, [activeAlerts, authorizedProjectIds, isUserCeo]);
 
   const displayedPopupAlerts = useMemo(() => {
@@ -253,7 +254,15 @@ export default function Chat() {
         }
       } catch {}
     };
-    return () => socket.close();
+    return () => {
+      if (socket.readyState === WebSocket.OPEN) {
+        socket.close();
+      } else if (socket.readyState === WebSocket.CONNECTING) {
+        socket.addEventListener('open', () => socket.close());
+      } else {
+        socket.close();
+      }
+    };
   }, [activePid, isUserCeo]);
 
   const fetchAlerts = async () => {
@@ -342,7 +351,7 @@ export default function Chat() {
 
     try {
       const token = Cookies.get("pm_chatbot_access_token")
-      const response = await fetch(`${import.meta.env.VITE_API_URL || 'http://localhost:8000/api/v1'}/chat/stream`, {
+      const response = await fetch(`/api/v1/chat/stream`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

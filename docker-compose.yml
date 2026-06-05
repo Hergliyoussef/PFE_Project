@@ -10,7 +10,7 @@ services:
       POSTGRES_PASSWORD: pfe_password_2026
       POSTGRES_DB: pm_chatbot
     ports:
-      - "5433:5432"
+      - "127.0.0.1:5433:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks:
@@ -22,7 +22,7 @@ services:
     image: redis:7-alpine
     container_name: pm_redis
     ports:
-      - "6379:6379"
+      - "127.0.0.1:6379:6379"
     volumes:
       - redis_data:/data
     networks:
@@ -50,7 +50,7 @@ services:
     image: redmine:latest
     container_name: redmine
     ports:
-      - "3000:3000"
+      - "127.0.0.1:3000:3000"
     environment:
       REDMINE_DB_MYSQL: redmine-mysql
       REDMINE_DB_DATABASE: redmine_db
@@ -69,7 +69,7 @@ services:
       dockerfile: backend/Dockerfile
     container_name: pm_backend
     ports:
-      - "8000:8000"
+      - "127.0.0.1:8000:8000"
     environment:
       - DATABASE_URL=postgresql://postgres:pfe_password_2026@db:5432/pm_chatbot
       - REDIS_HOST=redis
@@ -89,7 +89,7 @@ services:
       context: ./frontend
     container_name: pm_frontend
     ports:
-      - "80:80"
+      - "127.0.0.1:80:80"
     depends_on:
       - backend
     networks:

@@ -5,7 +5,7 @@ Utilise Redis pour stocker les alertes (plus de store in-memory).
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 from datetime import date
-import logging, sys, os
+import logging, sys, os, asyncio
 sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 
 logger        = logging.getLogger(__name__)
@@ -21,12 +21,13 @@ async def check_project(project_id: str):
 
     try:
         today   = str(date.today())
-        metrics = redmine.compute_project_metrics(project_id)
-        issues  = redmine.get_issues(project_id, status="open")
+        metrics = await asyncio.to_thread(redmine.compute_project_metrics, project_id)
+        issues  = await asyncio.to_thread(redmine.get_issues, project_id, status="open")
 
         # Récupération du nom réel du projet
         try:
-            p_data = redmine._get(f"/projects/{project_id}.json", cache_ttl=3600).get("project", {})
+            p_raw = await asyncio.to_thread(redmine._get, f"/projects/{project_id}.json", cache_ttl=3600)
+            p_data = p_raw.get("project", {})
             project_name = p_data.get("name", project_id)
         except:
             project_name = project_id
@@ -35,10 +36,17 @@ async def check_project(project_id: str):
         metrics_to_cache = {k: v for k, v in metrics.items() if k != "time_by_user" and k != "overdue_list"}
         cache_metrics(project_id, metrics_to_cache)
         logger.info(f"[Monitor] Métriques en cache pour {project_id}: {metrics_to_cache}")
+        
+        # Broadcast temps réel pour rafraîchir l'interface
+        await manager.broadcast_to_project(project_id, {
+            "type": "metrics_updated",
+            "project_id": project_id
+        })
 
         # ── Alertes retard (Détection de changement d'état) ──────────────────
         from services.redis_client import r as redis_conn
-        for issue in redmine.get_overdue_issues(project_id):
+        overdue_issues = await asyncio.to_thread(redmine.get_overdue_issues, project_id)
+        for issue in overdue_issues:
             due   = issue.get("due_date", "")
             delay = (date.today() - date.fromisoformat(due)).days if due else 0
             
@@ -75,21 +83,26 @@ async def check_project(project_id: str):
 
         # ── Alertes Priorité Haute (NOUVEAU) ──────────────────────────
         for issue in issues:
-            prio_id = issue.get("priority", {}).get("id") if isinstance(issue.get("priority"), dict) else issue.get("priority_id", 0)
-            prio_name = issue.get("priority", {}).get("name", "") if isinstance(issue.get("priority"), dict) else ""
+            prio_id = issue.get("priority_id", 0)
+            prio_val = issue.get("priority", "")
+            prio_name = prio_val.get("name", "") if isinstance(prio_val, dict) else str(prio_val)
             
-            # 4 = Urgent, 5 = Immédiat (ou basé sur le nom)
-            if prio_id >= 4 or prio_name.lower() in ["urgent", "immédiat", "immediate", "high"]:
-                alert_key = f"alert_sent:{project_id}:urgent:{issue['id']}"
+            # 3 = Haut, 4 = Urgent, 5 = Immédiat
+            if prio_id >= 3 or prio_name.lower() in ["haut", "high", "urgent", "immédiat", "immediate"]:
+                alert_key = f"alert_sent:{project_id}:priority:{issue['id']}"
                 if not redis_conn.exists(alert_key):
                     assigned_name = issue.get("assigned") or "Non assigné"
-                    msg_urgent = f"ALERTE : Nouveau ticket URGENT #{issue['id']} : {issue['subject'][:50]} (Assigné à : {assigned_name})"
+                    is_critical = prio_id >= 4 or prio_name.lower() in ["urgent", "immédiat", "immediate"]
+                    prio_level = "critique" if is_critical else "warning"
+                    prio_label = "URGENT" if is_critical else "HAUT"
                     
-                    alert_id = f"{project_id}:urgent:{issue['id']}"
+                    msg_urgent = f"ALERTE : Nouveau ticket {prio_label} #{issue['id']} : {issue['subject'][:50]} (Assigné à : {assigned_name})"
+                    
+                    alert_id = f"{project_id}:priority:{issue['id']}"
                     push_alert(project_id, {
                         "id":            alert_id,
                         "type":          "priorité",
-                        "level":         "critique",
+                        "level":         prio_level,
                         "message":       msg_urgent,
                         "issue_id":      issue["id"],
                         "project_id":    project_id,
@@ -101,7 +114,7 @@ async def check_project(project_id: str):
                         "alert": {
                             "id":            alert_id,
                             "type":          "priorité",
-                            "level":         "critique",
+                            "level":         prio_level,
                             "message":       msg_urgent,
                             "issue_id":      issue["id"],
                             "project_id":    project_id,
@@ -145,7 +158,8 @@ async def check_project(project_id: str):
                 })
 
         # ── Surcharge équipe ──────────────────────────────────
-        for name, hours in redmine.get_time_by_user(project_id).items():
+        time_by_user = await asyncio.to_thread(redmine.get_time_by_user, project_id)
+        for name, hours in time_by_user.items():
             load = min((hours / 40) * 100, 100)
             if load >= SEUIL_CHARGE:
                 alert_key = f"alert_sent:{project_id}:surcharge:{name}"
@@ -181,7 +195,8 @@ async def check_all_projects():
     from services.redmine_client import redmine
     logger.info("[Monitor] Vérification automatique...")
     try:
-        for project in redmine.get_projects():
+        projects = await asyncio.to_thread(redmine.get_projects)
+        for project in projects:
             await check_project(project["identifier"])
     except Exception as e:
         logger.error(f"[Monitor] Erreur globale : {e}")
@@ -199,13 +214,8 @@ def clear_alerts(project_id: str):
 scheduler = AsyncIOScheduler()
 
 def start_monitor():
-    scheduler.add_job(
-        check_all_projects,
-        trigger=IntervalTrigger(seconds=10),
-        id="monitor", replace_existing=True,
-    )
-    scheduler.start()
-    logger.info("[Monitor] Démarré — Réactif — toutes les 10 secondes")
+    # Désactivé car remplacé par le monitoring événementiel via Webhooks
+    logger.info("[Monitor] Démarrage ignoré (le timer périodique est désactivé au profit des webhooks)")
 
 def stop_monitor():
     if scheduler.running:

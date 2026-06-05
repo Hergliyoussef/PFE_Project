@@ -8,10 +8,12 @@ import logging
 
 from api.chat import router as chat_router
 from api.auth import router as auth_router
+from api.webhooks import router as webhooks_router
 from services.websocket_manager import manager
 from fastapi import WebSocket, WebSocketDisconnect
 
 logging.basicConfig(level=logging.INFO)
+logging.getLogger("apscheduler").setLevel(logging.WARNING)
 logger = logging.getLogger(__name__)
 
 
@@ -27,14 +29,14 @@ async def lifespan(app: FastAPI):
     from services.auth import ensure_assistant_user
     ensure_assistant_user()
     
-    logger.info("Démarrage du monitoring proactif...")
-    start_monitor()
+    logger.info("Monitoring événementiel actif (via Webhooks Redmine).")
+    # start_monitor()
     # await check_all_projects() # Ne pas bloquer le démarrage si Redmine est lent/down
     yield
-    stop_monitor()
+    # stop_monitor()
 app = FastAPI(
     title       = "PM Assistant API",
-    description = "hatbot IA d'Assistance à la Gestion de Projet — Redmine",
+    description = "chatbot IA d'Assistance à la Gestion de Projet — Redmine",
     version     = "1.0.0",
     lifespan    = lifespan,
 )
@@ -42,7 +44,8 @@ app = FastAPI(
 app.add_middleware(
     CORSMiddleware,
     allow_origins      = [
-        "http://localhost:8501", 
+        "http://localhost:8501",
+        "http://127.0.0.1:8501",
         "http://localhost:5173", 
         "http://127.0.0.1:5173",
         "http://localhost:5174", 
@@ -50,6 +53,7 @@ app.add_middleware(
         "http://localhost:3000", 
         "http://127.0.0.1:3000",
         "http://pm_frontend"
+        
     ],
     allow_methods      = ["*"],
     allow_headers      = ["*"],
@@ -59,6 +63,7 @@ app.add_middleware(
 # ── Routers ───────────────────────────────────────────────────
 app.include_router(auth_router, prefix="/api/v1")     # /api/v1/auth/login
 app.include_router(chat_router, prefix="/api/v1")     # /api/v1/chat
+app.include_router(webhooks_router, prefix="/api/v1") # /api/v1/webhooks/redmine
 
 @app.websocket("/ws/dashboard/{project_id}")
 async def websocket_endpoint(websocket: WebSocket, project_id: str):

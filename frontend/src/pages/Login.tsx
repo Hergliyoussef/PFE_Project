@@ -7,9 +7,7 @@ import axios from "axios"
 import Cookies from "js-cookie"
 import { toast } from "sonner"
 
-const API_BASE_URL = import.meta.env.DEV 
-  ? "http://localhost:8000/api/v1" 
-  : "/api/v1"
+const API_BASE_URL = "/api/v1"
 
 export default function Login() {
   const [login, setLogin] = useState("")

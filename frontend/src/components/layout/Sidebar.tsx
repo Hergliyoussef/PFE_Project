@@ -8,9 +8,7 @@ import axios from "axios"
 import Cookies from "js-cookie"
 import { useNavigate } from "react-router-dom"
 
-const API_BASE_URL = import.meta.env.DEV 
-  ? "http://localhost:8000/api/v1" 
-  : "/api/v1"
+const API_BASE_URL = "/api/v1"
 
 const getApi = () => {
   const token = Cookies.get("pm_chatbot_access_token")

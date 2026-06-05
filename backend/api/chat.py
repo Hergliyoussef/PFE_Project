@@ -747,8 +747,7 @@ async def get_project_metrics(
     redmine_user_login_ctx.set(current_user.get("sub"))
 
     # Lancer une vérification proactive d'alerte en arrière-plan (ultra-rapide, temps réel sous 5s)
-    from services.monitor import check_project
-    background_tasks.add_task(check_project, project_id)
+    # Note: Retiré pour éviter une boucle infinie avec le broadcast WebSocket "metrics_updated"
 
     try:
         # On récupère les métriques complètes de Redmine
